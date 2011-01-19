@@ -6,9 +6,9 @@
 */
 
 /*
-#  compile-command: sdcc --no-std-crt0 -mz80 --no-peep --code-loc 0x0000 --stack-loc 0xFFFF z80-stub.c -o z80-stub.out
-  compile-command: sdcc  -mz80 --no-peep --stack-loc 0xFFFF z80-stub.c -o z80-stub.out
- */
+  # compile command
+  sdcc  -mz80 --model-large --no-peep --stack-auto --code-loc 0x0000 --stack-loc 0xF000 z80-stub.c -o z80-stub.out
+*/
 
 
 /* Remote communication protocol.
