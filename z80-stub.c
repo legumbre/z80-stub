@@ -5,6 +5,12 @@
    Modifications for the Z80 by Leonardo Etcheverry <letcheve@fing.edu.uy>, 2010.
 */
 
+/*
+#  compile-command: sdcc --no-std-crt0 -mz80 --no-peep --code-loc 0x0000 --stack-loc 0xFFFF z80-stub.c -o z80-stub.out
+  compile-command: sdcc  -mz80 --no-peep --stack-loc 0xFFFF z80-stub.c -o z80-stub.out
+ */
+
+
 /* Remote communication protocol.
 
    A debug packet whose contents are <data>
@@ -160,6 +166,11 @@
 #define TRAPA_INSTR    0xc300
 #define SSTEP_INSTR    0xc3ff
 
+/* Z80 registers (should match the constants used in gdb  */
+// TODO!: maybe include someheader.h which is also included from z80-tdep.h?
+
+
+
 /* Z80 instruction opcodes */
 #define RST08_INST     0xCF
 #define BREAK_INST     RST08_INST
@@ -218,8 +229,8 @@ void catch_exception_255 (void);
 void breakpoint (void);
 
 
-#define init_stack_size 512  /* if you change this you should also modify BINIT */
-#define stub_stack_size 512
+#define init_stack_size 8*1024  /* if you change this you should also modify BINIT */
+#define stub_stack_size 8*1024
 
 int init_stack[init_stack_size];//  __attribute__ ((section ("stack"))) = {0};
 int stub_stack[stub_stack_size];//  __attribute__ ((section ("stack"))) = {0};
@@ -238,7 +249,7 @@ void BINIT ();
 #define USER_VEC         255
 
 
-
+char intcause; /* TODO: initialize */
 char in_nmi;   /* Set when handling an NMI, so we don't reenter */
 int dofault;  /* Non zero, bus errors will raise exception */
 
@@ -268,6 +279,47 @@ static const char hexchars[] = "0123456789abcdef";
 static char remcomInBuffer[BUFMAX];
 static char remcomOutBuffer[BUFMAX];
 
+
+void
+INIT (void)
+{
+  __asm
+    jp    _RESET
+    nop
+    nop
+    nop
+    nop
+    nop
+    push  af   ;; RST 08, used for breakpoints
+    ld    hl,#0 ;; we hit a breakpoint, save this info since we will need it later (handle_exception)
+    jp    _sr  ;; TODO maybe change to saveRegisters, semantics
+  //        asm ("_BINIT: mov.l  L1,r15");
+  //        asm ("bra _INIT");
+  //        asm ("nop");
+  //        asm ("L1: .long _init_stack + 8*1024*4");
+   __endasm;
+}
+
+void
+RESET (void) __naked
+{
+  init_serial();
+  
+#ifdef MONITOR
+  reset_hook ();
+#endif
+
+  in_nmi = 0;
+  dofault = 1;
+  stepped = 0;
+
+  stub_sp = stub_stack + stub_stack_size;
+  breakpoint ();
+
+  while (1)
+    ;
+}
+
 char highhex(int  x)
 {
   return hexchars[(x >> 4) & 0xf];
@@ -283,8 +335,6 @@ char lowhex(int  x)
  */
 
 #define BREAKPOINT() { __asm RST 08 __endasm; }
-
-
 
 /*
  * Routines to handle hex data
@@ -751,17 +801,9 @@ gdb_handle_exception (int exceptionVector)
 
 #define GDBCOOKIE 0x5ac 
 static int ingdbmode;
-/* We've had an exception - choose to go into the monitor or
-   the gdb stub */
 void handle_exception(int exceptionVector)
 {
-#ifdef MONITOR
-    if (ingdbmode != GDBCOOKIE)
-      monitor_handle_exception (exceptionVector);
-    else 
-#endif
-      gdb_handle_exception (exceptionVector);
-
+  gdb_handle_exception (exceptionVector);
 }
 
 void
@@ -774,60 +816,40 @@ gdb_mode (void)
    beginning of a program to sync up with a debugger and can be used
    otherwise as a quick means to stop program execution and "break" into
    the debugger. */
-
 void
 breakpoint (void)
 {
-      BREAKPOINT ();
+  BREAKPOINT ();
 }
 
+/* registers constants */
+#define R_A     0
+#define R_F     1
 
+#define R_BC    2
+#define R_DE    3
+#define R_HL    4
+#define R_IX    5
+#define R_IY    6
+#define R_SP    7
 
-//        asm ("_BINIT: mov.l  L1,r15");
-//        asm ("bra _INIT");
-//        asm ("nop");
-//        asm ("L1: .long _init_stack + 8*1024*4");
-void
-INIT (void)
-{
-  init_serial();
+#define R_I     8
+#define R_R     9
 
-#ifdef MONITOR
-  reset_hook ();
-#endif
+#define R_AX    10
+#define R_FX    11
+#define R_BCX   12
+#define R_DEX   13
+#define R_HLX   14
 
-  in_nmi = 0;
-  dofault = 1;
-  stepped = 0;
+// TODO: fix this!
+#define R_AF    15
+#define R_AFX   16
 
-  stub_sp = stub_stack + stub_stack_size;
-  breakpoint ();
-
-  while (1)
-    ;
-}
 
 
 static void sr() __naked
 {
-  __asm
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-  __endasm;
-
 //          /* Calling Reset does the same as pressing the button */
 //          asm (".global _Reset
 //                .global _WarmReset
@@ -838,6 +860,45 @@ static void sr() __naked
 //                 nop
 //                 .align 2
 //        L_sp:    .long _init_stack + 8000");
+
+  /* saveRegisters routine */
+ saveRegisters:
+  __asm
+    ld    (#_intcause), hl        ;; routine argument exception cause
+    pop   af                      ;; recover original af
+
+    ld    (#_registers + R_HL), hl
+    push  af ;; dirty trick to save AF
+    pop   hl
+    ld    (#_registers + R_AF), hl
+                                   
+    ld    (#_registers + R_BC), bc
+    ld    (#_registers + R_DE), de
+    ld    (#_registers + R_IX), ix
+    ld    (#_registers + R_IY), iy
+
+
+    ;; alternate register set
+    exx
+    ld    (#_registers + R_HLX), hl
+
+    push  af ;; dirty trick to save AF
+    pop   hl
+    ld    (#_registers + R_AFX), hl
+    ld    (#_registers + R_BCX), bc
+    ld    (#_registers + R_DEX), de
+
+    ;; switch back to original reg set
+    exx             
+
+    ld    hl, (#_intcause)
+    push  hl
+    call  _handle_exception              
+    pop   af      
+
+  __endasm;
+
+
 //        
 //          asm("saveRegisters:
 //                mov.l   @(L_reg, pc), r0
@@ -899,11 +960,30 @@ static void sr() __naked
 static void rr() __naked
 {
   __asm
-    nop
-    nop
-    nop
-    nop
-    nop
+    ld    hl, (#_registers+R_AF) ;; restore AF
+    push  hl
+    pop   af
+
+    ld    hl, (#_registers+R_HL)
+    ld    bc, (#_registers+R_BC)      
+    ld    de, (#_registers+R_DE)          
+    ld    ix, (#_registers+R_IX)      
+    ld    iy, (#_registers+R_IY)          
+
+
+    exx
+    ld    hl, (#_registers + R_HLX)
+
+    ld    hl, (#_registers + R_AFX)
+    push  hl
+    pop   af
+
+    ld    bc, (#_registers+R_BC)      
+    ld    de, (#_registers+R_DE)          
+
+    ;; switch back to original reg set
+    exx             
+                                  
   __endasm;
 
 //        asm("
@@ -953,7 +1033,7 @@ static void rr() __naked
 }
 
 
-void code_for_catch_exception(int n)
+void code_for_catch_exception(int n) __naked
 {
   __asm
     nop
@@ -1241,8 +1321,8 @@ handleError (char theSSR)
   SSR1 &= ~(SCI_ORER | SCI_PER | SCI_FER);
 }
 
-void
-main ()
+/* pacify the compiler */
+void main ()
 {
   ;
 }
