@@ -8,6 +8,11 @@
 /*
   # compile command
   sdcc  -mz80 --model-large --no-peep --stack-auto --code-loc 0x0000 --stack-loc 0xF000 z80-stub.c -o z80-stub.out
+
+sdcc --no-std-crt0 -mz80 --model-large --no-peep --stack-auto --code-loc 0x0000 --data-loc 0x9000 z80-stub.c -o z80-stub
+srec_cat z80-stub.hex -Intel -output z80-stub.bin -Binary
+
+
 */
 
 
@@ -229,12 +234,13 @@ void catch_exception_255 (void);
 void breakpoint (void);
 
 
-#define init_stack_size 8*1024  /* if you change this you should also modify BINIT */
-#define stub_stack_size 8*1024
+#define init_stack_size 1024  /* if you change this you should also modify BINIT */
+#define stub_stack_size 1024
 
 int init_stack[init_stack_size];//  __attribute__ ((section ("stack"))) = {0};
 int stub_stack[stub_stack_size];//  __attribute__ ((section ("stack"))) = {0};
 
+char useless_buffer[30];
 
 void INIT ();
 void BINIT ();
@@ -252,6 +258,8 @@ void BINIT ();
 char intcause; /* TODO: initialize */
 char in_nmi;   /* Set when handling an NMI, so we don't reenter */
 int dofault;  /* Non zero, bus errors will raise exception */
+
+char read_ch; /* TODO byte read from serial port, for now it's a global */
 
 int *stub_sp;
 
@@ -303,7 +311,8 @@ INIT (void)
 void
 RESET (void) __naked
 {
-  init_serial();
+  // commented out for qemu debugging
+  // init_serial();
   
 #ifdef MONITOR
   reset_hook ();
@@ -1269,11 +1278,13 @@ init_serial (void)
 int
 getDebugCharReady (void)
 {
-  char mySSR;
-  mySSR = SSR1 & ( SCI_PER | SCI_FER | SCI_ORER );
-  if ( mySSR )
-    handleError ( mySSR );
-  return SSR1 & SCI_RDRF ;
+  return 1;
+
+//   char mySSR;
+//   mySSR = SSR1 & ( SCI_PER | SCI_FER | SCI_ORER );
+//   if ( mySSR )
+//     handleError ( mySSR );
+//   return SSR1 & SCI_RDRF ;
 }
 
 char 
@@ -1285,21 +1296,31 @@ getDebugChar (void)
   while ( ! getDebugCharReady())
     ;
 
-  ch = RDR1;
-  SSR1 &= ~SCI_RDRF;
 
-  mySSR = SSR1 & (SCI_PER | SCI_FER | SCI_ORER);
+  // TODO: make a macro for IO, or see the SFR instructions
+  __asm
+    in a, (0x00)
+    ld (_read_ch), a
+  __endasm;
 
-  if (mySSR)
-    handleError (mySSR);
+//   ch = RDR1;
+//   SSR1 &= ~SCI_RDRF;
+// 
+//   mySSR = SSR1 & (SCI_PER | SCI_FER | SCI_ORER);
+// 
+//   if (mySSR)
+//     handleError (mySSR);
+// 
+//    return ch;
 
-  return ch;
+  return read_ch;
 }
 
 int 
 putDebugCharReady (void)
 {
-  return (SSR1 & SCI_TDRE);
+  // return (SSR1 & SCI_TDRE);
+  return 1;
 }
 
 void
@@ -1311,8 +1332,18 @@ putDebugChar (char ch)
   /*
    * Write data into TDR and clear TDRE
    */
-  TDR1 = ch;
-  SSR1 &= ~SCI_TDRE;
+
+  // write the char to the output port
+
+  // TODO: make a macro for IO, or see the SFR instructions
+  __asm
+    ld    a,4(ix) 
+    out   (0x00),a
+  __endasm;
+
+  //  TDR1 = ch;
+  // SSR1 &= ~SCI_TDRE;
+ return;
 }
 
 void 
