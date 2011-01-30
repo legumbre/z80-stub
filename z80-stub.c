@@ -193,7 +193,7 @@ srec_cat z80-stub.hex -Intel -output z80-stub.bin -Binary
 /*
  * Number of bytes for registers
  */
-#define NUMREGBYTES 26
+#define NUMREGBYTES 26 // 6(1byte) + 10(2bytes)
 
 /*
  * typedef
@@ -298,7 +298,7 @@ INIT (void)
     nop
     nop
     nop
-    push  af   ;; RST 08, used for breakpoints
+    push  hl   ;; RST 08, used for breakpoints
     ld    hl,#0 ;; we hit a breakpoint, save this info since we will need it later (handle_exception)
     jp    _sr  ;; TODO maybe change to saveRegisters, semantics
   //        asm ("_BINIT: mov.l  L1,r15");
@@ -835,26 +835,27 @@ breakpoint (void)
 #define R_A     0
 #define R_F     1
 
+// 16 bit registers
 #define R_BC    2
-#define R_DE    3
-#define R_HL    4
-#define R_IX    5
-#define R_IY    6
-#define R_SP    7
+#define R_DE    4  
+#define R_HL    6  
+#define R_IX    8  
+#define R_IY    10  
+#define R_SP    12  
 
-#define R_I     8
-#define R_R     9
+#define R_I     13
+#define R_R     14
 
-#define R_AX    10
-#define R_FX    11
-#define R_BCX   12
-#define R_DEX   13
-#define R_HLX   14
+#define R_AX    16
+#define R_FX    17
+#define R_BCX   18
+#define R_DEX   20
+#define R_HLX   22
 
 // TODO: fix this!
-#define R_AF    15
-#define R_AFX   16
-
+#define R_PC    24
+// #define R_AF    24
+// #define R_AFX   26
 
 
 static void sr() __naked
@@ -873,32 +874,38 @@ static void sr() __naked
   /* saveRegisters routine */
  saveRegisters:
   __asm
-    ld    (#_intcause), hl        ;; routine argument exception cause
-    pop   af                      ;; recover original af
+    ld    (#_intcause), hl        ;; argument passed in hl signals the exception cause
+    pop   hl                      ;; recover original hl before hitting the breakpoint
 
     ld    (#_registers + R_HL), hl
-    push  af ;; dirty trick to save AF
+    push  af                        ;; dirty trick to save AF
     pop   hl
-    ld    (#_registers + R_AF), hl
+    ld    (#_registers + R_A), hl   ;; Yes, this makes sense. 
                                    
     ld    (#_registers + R_BC), bc
     ld    (#_registers + R_DE), de
     ld    (#_registers + R_IX), ix
     ld    (#_registers + R_IY), iy
 
-
     ;; alternate register set
     exx
+    ex   af,af'                     ;;'
+
     ld    (#_registers + R_HLX), hl
 
     push  af ;; dirty trick to save AF
     pop   hl
-    ld    (#_registers + R_AFX), hl
+    ld    (#_registers + R_AX),  hl  ;; saves both A and F (because R_FX == R_AX+1)
     ld    (#_registers + R_BCX), bc
     ld    (#_registers + R_DEX), de
 
     ;; switch back to original reg set
-    exx             
+    ex   af,af'                     ;;'
+    exx
+
+    pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
+    ld   (#_registers + R_PC), hl
+    push hl
 
     ld    hl, (#_intcause)
     push  hl
@@ -969,28 +976,29 @@ static void sr() __naked
 static void rr() __naked
 {
   __asm
-    ld    hl, (#_registers+R_AF) ;; restore AF
+    ld    hl, (#_registers + R_A) ;; restore AF
     push  hl
     pop   af
 
-    ld    hl, (#_registers+R_HL)
-    ld    bc, (#_registers+R_BC)      
-    ld    de, (#_registers+R_DE)          
-    ld    ix, (#_registers+R_IX)      
-    ld    iy, (#_registers+R_IY)          
+    ld    hl, (#_registers + R_HL)
+    ld    bc, (#_registers + R_BC)      
+    ld    de, (#_registers + R_DE)          
+    ld    ix, (#_registers + R_IX)      
+    ld    iy, (#_registers + R_IY)          
 
 
     exx
+    ex    af, af'                         ;'
     ld    hl, (#_registers + R_HLX)
+    ld    bc, (#_registers + R_BCX)      
+    ld    de, (#_registers + R_DEX)          
 
-    ld    hl, (#_registers + R_AFX)
+    ld    hl, (#_registers + R_AX)        ; restores *both* A and F (see register number constants )
     push  hl
     pop   af
 
-    ld    bc, (#_registers+R_BC)      
-    ld    de, (#_registers+R_DE)          
-
     ;; switch back to original reg set
+    ex    af, af'                         ;'
     exx             
                                   
   __endasm;
