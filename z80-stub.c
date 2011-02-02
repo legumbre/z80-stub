@@ -3,17 +3,15 @@
    This stub is based on the SH stub by Ben Lee and Steve Chamberlain. 
 
    Modifications for the Z80 by Leonardo Etcheverry <letcheve@fing.edu.uy>, 2010.
+   
+   - Building the stub -
+   # sdcc --no-std-crt0 -mz80 --model-large --no-peep --stack-auto --code-loc 0x0000 --data-loc 0x9000 z80-stub.c -o z80-stub
+   # srec_cat z80-stub -Intel -output z80-stub.bin -Binary
+
+   # (optional, create a 16K rom file for the z80 qemu target)
+   # cat z80-stub.bin /dev/zero | dd bs=1k count=16 > /opt/qemu-z80/share/qemu/zx-rom.bin
 */
 
-/*
-  # compile command
-  sdcc  -mz80 --model-large --no-peep --stack-auto --code-loc 0x0000 --stack-loc 0xF000 z80-stub.c -o z80-stub.out
-
-sdcc --no-std-crt0 -mz80 --model-large --no-peep --stack-auto --code-loc 0x0000 --data-loc 0x9000 z80-stub.c -o z80-stub
-srec_cat z80-stub.hex -Intel -output z80-stub.bin -Binary
-
-
-*/
 
 
 /* Remote communication protocol.
@@ -169,16 +167,16 @@ srec_cat z80-stub.hex -Intel -output z80-stub.bin -Binary
 #define RTS_INSTR      0x000b
 #define RTE_INSTR      0x002b
 #define TRAPA_INSTR    0xc300
-#define SSTEP_INSTR    0xc3ff
+/// LLL #define SSTEP_INSTR    0xc3ff
 
 /* Z80 registers (should match the constants used in gdb  */
-// TODO!: maybe include someheader.h which is also included from z80-tdep.h?
-
+// TODO: maybe include someheader.h which is also included from z80-tdep.h?
 
 
 /* Z80 instruction opcodes */
 #define RST08_INST     0xCF
 #define BREAK_INST     RST08_INST
+#define SSTEP_INSTR    BREAK_INST
 
 /* Renesas SH processor register masks */
 
@@ -189,6 +187,34 @@ srec_cat z80-stub.hex -Intel -output z80-stub.bin -Binary
  * buffers. At least NUMREGBYTES*2 are needed for register packets.
  */
 #define BUFMAX 256
+
+
+/* registers constants */
+#define R_A     0
+#define R_F     1
+
+// 16 bit registers
+#define R_BC    2
+#define R_DE    4  
+#define R_HL    6  
+#define R_IX    8  
+#define R_IY    10  
+#define R_SP    12  
+
+#define R_I     13
+#define R_R     14
+
+#define R_AX    16
+#define R_FX    17
+#define R_BCX   18
+#define R_DEX   20
+#define R_HLX   22
+
+// TODO: fix this!
+#define R_PC    24
+// #define R_AF    24
+// #define R_AFX   26
+
 
 /*
  * Number of bytes for registers
@@ -217,21 +243,10 @@ void init_serial();
 void putDebugChar (char);
 char getDebugChar (void);
 
-/* These are in the file but in asm statements so the compiler can't see them */
-void catch_exception_4 (void);
-void catch_exception_6 (void);
-void catch_exception_9 (void);
-void catch_exception_10 (void);
-void catch_exception_11 (void);
-void catch_exception_32 (void);
-void catch_exception_33 (void);
-void catch_exception_255 (void);
-
-
 
 #define catch_exception_random catch_exception_255 /* Treat all odd ones like 255 */
 
-void breakpoint (void);
+void breakpoint() __naked;
 
 
 #define init_stack_size 1024  /* if you change this you should also modify BINIT */
@@ -254,6 +269,7 @@ void BINIT ();
 #define IO_VEC            33
 #define USER_VEC         255
 
+#define Z80_RST08_VEC      8
 
 char intcause; /* TODO: initialize */
 char in_nmi;   /* Set when handling an NMI, so we don't reenter */
@@ -266,21 +282,41 @@ int *stub_sp;
 /* debug > 0 prints ill-formed commands in valid packets & checksum errors */
 int remote_debug;
 
-enum regnames
-  {
-    A, F, BC, DE, HL, IX, IY, SP, I, R,
-    AX, FX, BCX, DEX, HLX, PC,
-    NUM_REGISTERS
-  };
+/// enum regnames
+///   {
+///     A, F, BC, DE, HL, IX, IY, SP, I, R,
+///     AX, FX, BCX, DEX, HLX, PC,
+///     NUM_REGISTERS
+///   };
 
 typedef struct
   {
-    short *memAddr;
-    short oldInstr;
+    char *memAddr;
+    // LLL short oldInstr;
+    char oldInstr;
   }
 stepData;
 
-int registers[NUM_REGISTERS];
+
+struct {
+  char a;
+  char f;
+  short bc;
+  short de;
+  short hl;
+  short ix;
+  short iy;
+  short sp;
+  char i;
+  char r;
+  char ax;
+  char fx;
+  short bcx;
+  short dex;
+  short hlx;
+  short pc; } registers;
+
+// int registers[NUM_REGISTERS];
 stepData instrBuffer;
 char stepped;
 static const char hexchars[] = "0123456789abcdef";
@@ -298,13 +334,10 @@ INIT (void)
     nop
     nop
     nop
-    push  hl   ;; RST 08, used for breakpoints
-    ld    hl,#0 ;; we hit a breakpoint, save this info since we will need it later (handle_exception)
-    jp    _sr  ;; TODO maybe change to saveRegisters, semantics
-  //        asm ("_BINIT: mov.l  L1,r15");
-  //        asm ("bra _INIT");
-  //        asm ("nop");
-  //        asm ("L1: .long _init_stack + 8*1024*4");
+    push  hl               ;; RST 08, used for breakpoints
+    ld    hl,#08           ;; 08 means a breakpoint was hit, pass it to sr routine
+    jp    _sr              ;; TODO maybe change to saveRegisters, semantics
+
    __endasm;
 }
 
@@ -323,7 +356,20 @@ RESET (void) __naked
   stepped = 0;
 
   stub_sp = stub_stack + stub_stack_size;
-  breakpoint ();
+  breakpoint();
+
+  __asm
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+  __endasm;
+
 
   while (1)
     ;
@@ -343,7 +389,6 @@ char lowhex(int  x)
  * Assembly macros
  */
 
-#define BREAKPOINT() { __asm RST 08 __endasm; }
 
 /*
  * Routines to handle hex data
@@ -578,6 +623,7 @@ computeSignal (int exceptionVector)
 
     case TRAP_VEC:
     case USER_VEC:
+    case Z80_RST08_VEC:
       sigval = 5;
       break;
 
@@ -591,75 +637,77 @@ computeSignal (int exceptionVector)
 void
 doSStep (void)
 {
-  short *instrMem;
-  int displacement;
-  int reg;
+  char *instrMem;
+///LLL   int displacement;
+///LLL   int reg;
   unsigned short opcode;
 
-  instrMem = (short *) registers[PC];
+  //instrMem = (short *) registers[PC];
+  instrMem = (char *) registers.pc;
 
   opcode = *instrMem;
   stepped = 1;
 
-  if ((opcode & COND_BR_MASK) == BT_INSTR)
-    {
-      if (1) // if (registers[SR] & T_BIT_MASK)
-        {
-          displacement = (opcode & COND_DISP) << 1;
-          if (displacement & 0x80)
-            displacement |= 0xffffff00;
-          /*
-                   * Remember PC points to second instr.
-                   * after PC of branch ... so add 4
-                   */
-          instrMem = (short *) (registers[PC] + displacement + 4);
-        }
-      else
-        instrMem += 1;
-    }
-  else if ((opcode & COND_BR_MASK) == BF_INSTR)
-    {
-      if (1) // if (registers[SR] & T_BIT_MASK)
-        instrMem += 1;
-      else
-        {
-          displacement = (opcode & COND_DISP) << 1;
-          if (displacement & 0x80)
-            displacement |= 0xffffff00;
-          /*
-                   * Remember PC points to second instr.
-                   * after PC of branch ... so add 4
-                   */
-          instrMem = (short *) (registers[PC] + displacement + 4);
-        }
-    }
-  else if ((opcode & UCOND_DBR_MASK) == BRA_INSTR)
-    {
-      displacement = (opcode & UCOND_DISP) << 1;
-      if (displacement & 0x0800)
-        displacement |= 0xfffff000;
-
-      /*
-           * Remember PC points to second instr.
-           * after PC of branch ... so add 4
-           */
-      instrMem = (short *) (registers[PC] + displacement + 4);
-    }
-  else if ((opcode & UCOND_RBR_MASK) == JSR_INSTR)
-    {
-      reg = (char) ((opcode & UCOND_REG) >> 8);
-
-      instrMem = (short *) registers[reg];
-    }
-  else if (opcode == RTS_INSTR)
-    ; // instrMem = (short *) registers[PR];
-  else if (opcode == RTE_INSTR)
-    instrMem = (short *) registers[15];
-  else if ((opcode & TRAPA_MASK) == TRAPA_INSTR)
-    instrMem = (short *) ((opcode & ~TRAPA_MASK) << 2);
-  else
-    instrMem += 1;
-
+/// LLL   if ((opcode & COND_BR_MASK) == BT_INSTR)
+/// LLL     {
+/// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
+/// LLL         {
+/// LLL           displacement = (opcode & COND_DISP) << 1;
+/// LLL           if (displacement & 0x80)
+/// LLL             displacement |= 0xffffff00;
+/// LLL           /*
+/// LLL                    * Remember PC points to second instr.
+/// LLL                    * after PC of branch ... so add 4
+/// LLL                    */
+/// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
+/// LLL         }
+/// LLL       else
+/// LLL         instrMem += 1;
+/// LLL     }
+/// LLL   else if ((opcode & COND_BR_MASK) == BF_INSTR)
+/// LLL     {
+/// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
+/// LLL         instrMem += 1;
+/// LLL       else
+/// LLL         {
+/// LLL           displacement = (opcode & COND_DISP) << 1;
+/// LLL           if (displacement & 0x80)
+/// LLL             displacement |= 0xffffff00;
+/// LLL           /*
+/// LLL                    * Remember PC points to second instr.
+/// LLL                    * after PC of branch ... so add 4
+/// LLL                    */
+/// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
+/// LLL         }
+/// LLL     }
+/// LLL   else if ((opcode & UCOND_DBR_MASK) == BRA_INSTR)
+/// LLL     {
+/// LLL       displacement = (opcode & UCOND_DISP) << 1;
+/// LLL       if (displacement & 0x0800)
+/// LLL         displacement |= 0xfffff000;
+/// LLL 
+/// LLL       /*
+/// LLL            * Remember PC points to second instr.
+/// LLL            * after PC of branch ... so add 4
+/// LLL            */
+/// LLL       instrMem = (short *) (registers[PC] + displacement + 4);
+/// LLL     }
+/// LLL   else if ((opcode & UCOND_RBR_MASK) == JSR_INSTR)
+/// LLL     {
+/// LLL       reg = (char) ((opcode & UCOND_REG) >> 8);
+/// LLL 
+/// LLL       instrMem = (short *) registers[reg];
+/// LLL     }
+/// LLL   else if (opcode == RTS_INSTR)
+/// LLL     ; // instrMem = (short *) registers[PR];
+/// LLL   else if (opcode == RTE_INSTR)
+/// LLL     instrMem = (short *) registers[15];
+/// LLL   else if ((opcode & TRAPA_MASK) == TRAPA_INSTR)
+/// LLL     instrMem = (short *) ((opcode & ~TRAPA_MASK) << 2);
+/// LLL   else
+/// LLL     instrMem += 1;
+  instrMem += 1;
+  
   instrBuffer.memAddr = instrMem;
   instrBuffer.oldInstr = *instrMem;
   *instrMem = SSTEP_INSTR;
@@ -672,8 +720,13 @@ doSStep (void)
 void
 undoSStep (void)
 {
+/// LLL   if (stepped)
+/// LLL     {  short *instrMem;
+/// LLL       instrMem = instrBuffer.memAddr;
+/// LLL       *instrMem = instrBuffer.oldInstr;
+/// LLL     }
   if (stepped)
-    {  short *instrMem;
+    { char *instrMem;
       instrMem = instrBuffer.memAddr;
       *instrMem = instrBuffer.oldInstr;
     }
@@ -688,8 +741,6 @@ to gdb's requests.
 When in the monitor mode we talk a human on the serial line rather than gdb.
 
 */
-
-
 void
 gdb_handle_exception (int exceptionVector)
 {
@@ -707,14 +758,15 @@ gdb_handle_exception (int exceptionVector)
   putpacket (remcomOutBuffer);
 
   /*
-   * exception 255 indicates a software trap
-   * inserted in place of code ... so back up
-   * PC by one instruction, since this instruction
-   * will later be replaced by its original one!
+   * Exception 0x08 means a RST 08 instruction (breakpoint) inserted in
+   * place of code
+   * 
+   * Backup PC by one instruction, this instruction will later
+   * be replaced by the original instruction at the breakpoint
    */
-  if (exceptionVector == 0xff
-      || exceptionVector == 0x20)
-    registers[PC] -= 2;
+  if (exceptionVector == 0x08)
+    registers.pc -= 1;
+    // registers[R_PC] -= 1;
 
   /*
    * Do the thangs needed to undo
@@ -789,8 +841,8 @@ gdb_handle_exception (int exceptionVector)
           {
             /* tRY, to read optional parameter, pc unchanged if no parm */
             if (hexToInt (&ptr, &addr))
-              registers[PC] = addr;
-
+              registers.pc = addr;
+              //registers[R_PC] = addr;
             if (stepping)
               doSStep ();
           }
@@ -826,36 +878,20 @@ gdb_mode (void)
    otherwise as a quick means to stop program execution and "break" into
    the debugger. */
 void
-breakpoint (void)
+breakpoint (void) __naked
 {
-  BREAKPOINT ();
+  __asm              
+  nop                
+  nop                
+  nop                
+  RST 08             
+  nop                
+  nop                
+  jp  0xb000        
+  nop                
+  nop                
+  __endasm;          
 }
-
-/* registers constants */
-#define R_A     0
-#define R_F     1
-
-// 16 bit registers
-#define R_BC    2
-#define R_DE    4  
-#define R_HL    6  
-#define R_IX    8  
-#define R_IY    10  
-#define R_SP    12  
-
-#define R_I     13
-#define R_R     14
-
-#define R_AX    16
-#define R_FX    17
-#define R_BCX   18
-#define R_DEX   20
-#define R_HLX   22
-
-// TODO: fix this!
-#define R_PC    24
-// #define R_AF    24
-// #define R_AFX   26
 
 
 static void sr() __naked
@@ -880,7 +916,10 @@ static void sr() __naked
     ld    (#_registers + R_HL), hl
     push  af                        ;; dirty trick to save AF
     pop   hl
-    ld    (#_registers + R_A), hl   ;; Yes, this makes sense. 
+    ld    a,h
+    ld    (#_registers + R_A ), a   ;; Yes, this makes sense. 
+    ld    a,l
+    ld    (#_registers + R_F), a   ;; Yes, this makes sense. 
                                    
     ld    (#_registers + R_BC), bc
     ld    (#_registers + R_DE), de
@@ -904,6 +943,7 @@ static void sr() __naked
     exx
 
     pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
+                                        ;; dec  hl                         ; OJOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO                                   
     ld   (#_registers + R_PC), hl
     push hl
 
@@ -913,60 +953,6 @@ static void sr() __naked
     pop   af      
 
   __endasm;
-
-
-//        
-//          asm("saveRegisters:
-//                mov.l   @(L_reg, pc), r0
-//                mov.l   @r15+, r1                               ! pop R0
-//                mov.l   r2, @(0x08, r0)                         ! save R2
-//                mov.l   r1, @r0                                 ! save R0
-//                mov.l   @r15+, r1                               ! pop R1
-//                mov.l   r3, @(0x0c, r0)                         ! save R3
-//                mov.l   r1, @(0x04, r0)                         ! save R1
-//                mov.l   r4, @(0x10, r0)                         ! save R4
-//                mov.l   r5, @(0x14, r0)                         ! save R5
-//                mov.l   r6, @(0x18, r0)                         ! save R6
-//                mov.l   r7, @(0x1c, r0)                         ! save R7
-//                mov.l   r8, @(0x20, r0)                         ! save R8
-//                mov.l   r9, @(0x24, r0)                         ! save R9
-//                mov.l   r10, @(0x28, r0)                        ! save R10
-//                mov.l   r11, @(0x2c, r0)                        ! save R11
-//                mov.l   r12, @(0x30, r0)                        ! save R12
-//                mov.l   r13, @(0x34, r0)                        ! save R13
-//                mov.l   r14, @(0x38, r0)                        ! save R14
-//                mov.l   @r15+, r4                               ! save arg to handleException
-//                add     #8, r15                                 ! hide PC/SR values on stack
-//                mov.l   r15, @(0x3c, r0)                        ! save R15
-//                add     #-8, r15                                ! save still needs old SP value
-//                add     #92, r0                                 ! readjust register pointer
-//                mov     r15, r2
-//                add     #4, r2
-//                mov.l   @r2, r2                                 ! R2 has SR
-//                mov.l   @r15, r1                                ! R1 has PC
-//                mov.l   r2, @-r0                                ! save SR
-//                sts.l   macl, @-r0                              ! save MACL
-//                sts.l   mach, @-r0                              ! save MACH
-//                stc.l   vbr, @-r0                               ! save VBR
-//                stc.l   gbr, @-r0                               ! save GBR
-//                sts.l   pr, @-r0                                ! save PR
-//                mov.l   @(L_stubstack, pc), r2
-//                mov.l   @(L_hdl_except, pc), r3
-//                mov.l   @r2, r15
-//                jsr     @r3
-//                mov.l   r1, @-r0                                ! save PC
-//                mov.l   @(L_stubstack, pc), r0
-//                mov.l   @(L_reg, pc), r1
-//                bra     restoreRegisters
-//                mov.l   r15, @r0                                ! save __stub_stack
-//                
-//                .align 2
-//        L_reg:
-//                .long   _registers
-//        L_stubstack:
-//                .long   _stub_sp
-//        L_hdl_except:
-//                .long   _handle_exception");
 
 }
 
@@ -1000,104 +986,14 @@ static void rr() __naked
     ;; switch back to original reg set
     ex    af, af'                         ;'
     exx             
-                                  
+
+    ;; put the (new?) PC back in the stack as the return address
+    ld    hl, (#_registers + R_PC)
+    ex    (sp), hl
+    ld    hl, (#_registers + R_HL)
+
   __endasm;
-
-//        asm("
-//                .align 2        
-//                .global _resume
-//        _resume:
-//                mov     r4,r1
-//        restoreRegisters:
-//                add     #8, r1                                          ! skip to R2
-//                mov.l   @r1+, r2                                        ! restore R2
-//                mov.l   @r1+, r3                                        ! restore R3
-//                mov.l   @r1+, r4                                        ! restore R4
-//                mov.l   @r1+, r5                                        ! restore R5
-//                mov.l   @r1+, r6                                        ! restore R6
-//                mov.l   @r1+, r7                                        ! restore R7
-//                mov.l   @r1+, r8                                        ! restore R8
-//                mov.l   @r1+, r9                                        ! restore R9
-//                mov.l   @r1+, r10                                       ! restore R10
-//                mov.l   @r1+, r11                                       ! restore R11
-//                mov.l   @r1+, r12                                       ! restore R12
-//                mov.l   @r1+, r13                                       ! restore R13
-//                mov.l   @r1+, r14                                       ! restore R14
-//                mov.l   @r1+, r15                                       ! restore programs stack
-//                mov.l   @r1+, r0
-//                add     #-8, r15                                        ! uncover PC/SR on stack 
-//                mov.l   r0, @r15                                        ! restore PC onto stack
-//                lds.l   @r1+, pr                                        ! restore PR
-//                ldc.l   @r1+, gbr                                       ! restore GBR           
-//                ldc.l   @r1+, vbr                                       ! restore VBR
-//                lds.l   @r1+, mach                                      ! restore MACH
-//                lds.l   @r1+, macl                                      ! restore MACL
-//                mov.l   @r1, r0 
-//                add     #-88, r1                                        ! readjust reg pointer to R1
-//                mov.l   r0, @(4, r15)                                   ! restore SR onto stack+4
-//                mov.l   r2, @-r15
-//                mov.l   L_in_nmi, r0
-//                mov             #0, r2
-//                mov.b   r2, @r0
-//                mov.l   @r15+, r2
-//                mov.l   @r1+, r0                                        ! restore R0
-//                rte
-//                mov.l   @r1, r1                                         ! restore R1
-//        
-//        ");
-
-
 }
-
-
-void code_for_catch_exception(int n) __naked
-{
-  __asm
-    nop
-    nop
-    nop
-    nop
-    nop
-  __endasm;
-
-//          asm("         .globl  _catch_exception_%O0" : : "i" (n)                               ); 
-//          asm(" _catch_exception_%O0:" :: "i" (n)                                               );
-//        
-//          asm("         add     #-4, r15                                ! reserve spot on stack ");
-//          asm("         mov.l   r1, @-r15                               ! push R1               ");
-//        
-//          asm("         mov     #15<<4, r1                                                      ");
-//          asm("         ldc     r1, sr                                  ! disable interrupts    ");
-//          asm("         mov.l   r0, @-r15                               ! push R0               ");
-//        
-//          /* Prepare for saving context, we've already pushed r0 and r1, stick exception number
-//             into the frame */
-//          asm("         mov     r15, r0                                                         ");
-//          asm("         add     #8, r0                                                          ");
-//          asm("         mov     %0,r1" :: "i" (n)                                               );
-//          asm("         extu.b  r1,r1                                                           ");
-//          asm("         bra     saveRegisters                           ! save register values  ");
-//          asm("         mov.l   r1, @r0                                 ! save exception #      ");
-}
-
-
-static  void
-exceptions (void)
-{
-  // code_for_catch_exception (CPU_BUS_ERROR_VEC);
-  // code_for_catch_exception (DMA_BUS_ERROR_VEC);
-  // code_for_catch_exception (INVALID_INSN_VEC);
-  // code_for_catch_exception (INVALID_SLOT_VEC);
-  // code_for_catch_exception (NMI_VEC);
-  // code_for_catch_exception (TRAP_VEC);
-  code_for_catch_exception (8); // used to be USER_VEC
-  // code_for_catch_exception (IO_VEC);
-}
-
-
-
-
-
 
 /* Support for Serial I/O using on chip uart */
 
@@ -1298,8 +1194,8 @@ getDebugCharReady (void)
 char 
 getDebugChar (void)
 {
-  char ch;
-  char mySSR;
+/// LLL  char ch; //TODO: fix this, it's global for now
+//  char mySSR;
 
   while ( ! getDebugCharReady())
     ;
@@ -1334,6 +1230,7 @@ putDebugCharReady (void)
 void
 putDebugChar (char ch)
 {
+  ch = ch; //TODO fix this, pacify the compiler for now
   while (!putDebugCharReady())
     ;
 
@@ -1357,11 +1254,23 @@ putDebugChar (char ch)
 void 
 handleError (char theSSR)
 {
-  SSR1 &= ~(SCI_ORER | SCI_PER | SCI_FER);
+  theSSR=theSSR;
+  // SSR1 &= ~(SCI_ORER | SCI_PER | SCI_FER);
 }
 
 /* pacify the compiler */
 void main ()
 {
-  ;
+  int a;
+  int i = 0;
+
+  for (i=0; i<255; i++)
+    {
+      a = i % 2;
+    }
+
 }
+
+/* Local Variables: */
+/* compile-command: "./compile_z80stub.sh" */
+/* End: */
