@@ -133,16 +133,17 @@
 
 #include <string.h>
 
-/* LLL comments, de SDCC
+/* Serial link constants */
 
-   On the Z80 the startup code is inserted by linking with crt0.rel
-   which is generated from sdcc/device/lib/z80/crt0.s. If you need a
-   different startup code you can use the compiler option --no-std-crt0
-   and provide your own crt0.rel.x 
-
-   Then add ''__asm'' and ''__endasm;''3.6 to the beginning and the
-   end of the function body:
-*/
+#ifdef TARGET_Z80 
+#define UART_BASE          0x80
+#define UART_DATA          UART_BASE+0
+#define UART_RX_VALID      UART_BASE+1
+#define UART_RX_VALID_MASK 0x80
+#else
+#define UART_BASE          0x00
+#define UART_DATA          UART_BASE+0
+#endif
 
 
 /* Renesas SH architecture instruction encoding masks */
@@ -357,20 +358,7 @@ RESET (void) __naked
 
   stub_sp = stub_stack + stub_stack_size;
   breakpoint();
-
-  __asm
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-  __endasm;
-
-
+  
   while (1)
     ;
 }
@@ -1182,13 +1170,14 @@ init_serial (void)
 int
 getDebugCharReady (void)
 {
-  return 1;
 
-//   char mySSR;
-//   mySSR = SSR1 & ( SCI_PER | SCI_FER | SCI_ORER );
-//   if ( mySSR )
-//     handleError ( mySSR );
-//   return SSR1 & SCI_RDRF ;
+#ifdef TARGET_Z80
+  __asm
+
+  __endasm;
+#endif
+
+  return 1;
 }
 
 char 
@@ -1197,25 +1186,30 @@ getDebugChar (void)
 /// LLL  char ch; //TODO: fix this, it's global for now
 //  char mySSR;
 
-  while ( ! getDebugCharReady())
-    ;
+//   while ( ! getDebugCharReady())
+//     ;
 
-
+#ifdef TARGET_QEMU
   // TODO: make a macro for IO, or see the SFR instructions
   __asm
     in a, (0x00)
     ld (_read_ch), a
   __endasm;
+#endif
 
-//   ch = RDR1;
-//   SSR1 &= ~SCI_RDRF;
-// 
-//   mySSR = SSR1 & (SCI_PER | SCI_FER | SCI_ORER);
-// 
-//   if (mySSR)
-//     handleError (mySSR);
-// 
-//    return ch;
+#ifdef TARGET_Z80
+
+  __asm
+0001$: 
+    in a, (UART_DATA)
+    ld (_read_ch), a
+
+    in a, (UART_RX_VALID)
+    and #UART_RX_VALID_MASK
+    jr z, 0001$
+  __endasm;
+
+#endif
 
   return read_ch;
 }
@@ -1234,20 +1228,23 @@ putDebugChar (char ch)
   while (!putDebugCharReady())
     ;
 
-  /*
-   * Write data into TDR and clear TDRE
-   */
-
   // write the char to the output port
 
+#ifdef TARGET_QEMU
   // TODO: make a macro for IO, or see the SFR instructions
   __asm
     ld    a,4(ix) 
     out   (0x00),a
   __endasm;
+#endif
 
-  //  TDR1 = ch;
-  // SSR1 &= ~SCI_TDRE;
+#ifdef TARGET_Z80
+    __asm
+    ld    a,4(ix) 
+    out   (UART_DATA),a
+  __endasm;
+#endif
+
  return;
 }
 
