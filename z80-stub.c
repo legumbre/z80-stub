@@ -902,12 +902,12 @@ static void sr() __naked
     pop   hl                      ;; recover original hl before hitting the breakpoint
 
     ld    (#_registers + R_HL), hl
-    push  af                        ;; dirty trick to save AF
+    push  af                      ;; dirty trick to save AF
     pop   hl
     ld    a,h
-    ld    (#_registers + R_A ), a   ;; Yes, this makes sense. 
+    ld    (#_registers + R_A), a   
     ld    a,l
-    ld    (#_registers + R_F), a   ;; Yes, this makes sense. 
+    ld    (#_registers + R_F), a    
                                    
     ld    (#_registers + R_BC), bc
     ld    (#_registers + R_DE), de
@@ -931,7 +931,6 @@ static void sr() __naked
     exx
 
     pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
-                                        ;; dec  hl                         ; OJOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO                                   
     ld   (#_registers + R_PC), hl
     push hl
 
@@ -950,8 +949,11 @@ static void sr() __naked
 static void rr() __naked
 {
   __asm
-    ld    hl, (#_registers + R_A) ;; restore AF
-    push  hl
+    ld    a, (#_registers + R_A) ;; restore AF
+    ld    b, a
+    ld    a, (#_registers + R_F)
+    ld    c, a
+    push  bc                              
     pop   af
 
     ld    hl, (#_registers + R_HL)
