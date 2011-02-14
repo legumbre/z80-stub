@@ -222,10 +222,7 @@
  */
 #define NUMREGBYTES 26 // 6(1byte) + 10(2bytes)
 
-/*
- * typedef
- */
-typedef void (*Function) ();
+
 
 /*
  * Forward declarations
@@ -328,75 +325,143 @@ struct tab_elt
 {
   unsigned char val;
   unsigned char mask;
-  Function      fp;
+  void * (*fp)(void *pc, struct tab_elt *inst);
   char *        text;
   unsigned char inst_len;
 } ;
 
+// typedef void* (*NextPCFunc) (void *pc, tab_elt *inst);
+
  #define TXTSIZ 24
 
+////  /* Table to disassemble machine codes without prefix.  */
+////  static struct tab_elt opc_main[] =
+////  {
+////    { 0x00, 0xFF, prt       , "nop",            1 },
+////    { 0x01, 0xCF, prt_rr_nn , "ld %s,0x%%04x",  3 },
+////    { 0x02, 0xFF, prt       , "ld (bc),a",      1 },
+////    { 0x03, 0xCF, prt_rr    , "inc " ,          1 },
+////    { 0x04, 0xC7, prt_r     , "inc %s",         1 },
+////    { 0x05, 0xC7, prt_r     , "dec %s",         1 },
+////    { 0x06, 0xC7, ld_r_n    , "ld %s,0x%%02x",  2 },
+////    { 0x07, 0xFF, prt       , "rlca",           1 },
+////    { 0x08, 0xFF, prt       , "ex af,af'",      1 },
+////    { 0x09, 0xCF, prt_rr    , "add hl,",        1 },
+////    { 0x0A, 0xFF, prt       , "ld a,(bc)" ,     1 },
+////    { 0x0B, 0xCF, prt_rr    , "dec ",           1 },
+////    { 0x0F, 0xFF, prt       , "rrca",           1 },
+////    { 0x10, 0xFF, pe_djnz   , "djnz ",          2 },
+////    { 0x12, 0xFF, prt       , "ld (de),a",      1 },
+////    { 0x17, 0xFF, prt       , "rla",            1 },
+////    { 0x18, 0xFF, prt_e     , "jr ",            2 },
+////    { 0x1A, 0xFF, prt       , "ld a,(de)",      1 },
+////    { 0x1F, 0xFF, prt       , "rra",            1 },
+////    { 0x20, 0xE7, jr_cc     , "jr %s,",         1 },
+////    { 0x22, 0xFF, prt_nn    , "ld (0x%04x),hl", 3 },
+////    { 0x27, 0xFF, prt       , "daa",            1 },
+////    { 0x2A, 0xFF, prt_nn    , "ld hl,(0x%04x)", 3 },
+////    { 0x2F, 0xFF, prt       , "cpl",            1 },
+////    { 0x32, 0xFF, prt_nn    , "ld (0x%04x),a",  3 },
+////    { 0x37, 0xFF, prt       , "scf",            1 },
+////    { 0x3A, 0xFF, prt_nn    , "ld a,(0x%04x)",  3 },
+////    { 0x3F, 0xFF, prt       , "ccf",            1 },
+//// 
+////    { 0x76, 0xFF, prt       , "halt",           1 },
+////    { 0x40, 0xC0, ld_r_r    , "ld %s,%s",       1 },
+//// 
+////    { 0x80, 0xC0, arit_r    , "%s%s",           1 },
+//// 
+////    { 0xC0, 0xC7, prt_cc    , "ret ",           1 },
+////    { 0xC1, 0xCF, pop_rr    , "pop",            1 },
+////    { 0xC2, 0xC7, jp_cc_nn  , "jp ",            3 },
+////    { 0xC3, 0xFF, prt_nn    , "jp 0x%04x",      3 },
+////    { 0xC4, 0xC7, jp_cc_nn  , "call ",          3 },
+////    { 0xC5, 0xCF, pop_rr    , "push",           1 }, 
+////    { 0xC6, 0xC7, arit_n    , "%s0x%%02x",      2 },
+////    { 0xC7, 0xC7, rst       , "rst 0x%02x",     1 },
+////    { 0xC9, 0xFF, prt       , "ret",            1 },
+////    { 0xCB, 0xFF, pref_cb   , "",               0 },
+////    { 0xCD, 0xFF, prt_nn    , "call 0x%04x",    3 },
+////    { 0xD3, 0xFF, prt_n     , "out (0x%02x),a", 2 },
+////    { 0xD9, 0xFF, prt       , "exx",            1 },
+////    { 0xDB, 0xFF, prt_n     , "in a,(0x%02x)",  2 },
+////    { 0xDD, 0xFF, pref_ind  , "ix",             0 },
+////    { 0xE3, 0xFF, prt       , "ex (sp),hl",     1 },
+////    { 0xE9, 0xFF, prt       , "jp (hl)",        1 },
+////    { 0xEB, 0xFF, prt       , "ex de,hl",       1 },
+////    { 0xED, 0xFF, pref_ed   , "",               0 },
+////    { 0xF3, 0xFF, prt       , "di",             1 },
+////    { 0xF9, 0xFF, prt       , "ld sp,hl",       1 },
+////    { 0xFB, 0xFF, prt       , "ei",             1 },
+////    { 0xFD, 0xFF, pref_ind  , "iy",             0 },
+////    { 0x00, 0x00, prt       , "????"          , 1 },
+////  } ;
+
  /* Table to disassemble machine codes without prefix.  */
- static struct tab_elt opc_main[] =
+struct tab_elt opc_main[] =
  {
-   { 0x00, 0xFF, prt       , "nop",            1 },
-   { 0x01, 0xCF, prt_rr_nn , "ld %s,0x%%04x",  3 },
-   { 0x02, 0xFF, prt       , "ld (bc),a",      1 },
-   { 0x03, 0xCF, prt_rr    , "inc " ,          1 },
-   { 0x04, 0xC7, prt_r     , "inc %s",         1 },
-   { 0x05, 0xC7, prt_r     , "dec %s",         1 },
-   { 0x06, 0xC7, ld_r_n    , "ld %s,0x%%02x",  2 },
-   { 0x07, 0xFF, prt       , "rlca",           1 },
-   { 0x08, 0xFF, prt       , "ex af,af'",      1 },
-   { 0x09, 0xCF, prt_rr    , "add hl,",        1 },
-   { 0x0A, 0xFF, prt       , "ld a,(bc)" ,     1 },
-   { 0x0B, 0xCF, prt_rr    , "dec ",           1 },
-   { 0x0F, 0xFF, prt       , "rrca",           1 },
-   { 0x10, 0xFF, prt_e     , "djnz ",          2 },
-   { 0x12, 0xFF, prt       , "ld (de),a",      1 },
-   { 0x17, 0xFF, prt       , "rla",            1 },
-   { 0x18, 0xFF, prt_e     , "jr ",            2 },
-   { 0x1A, 0xFF, prt       , "ld a,(de)",      1 },
-   { 0x1F, 0xFF, prt       , "rra",            1 },
-   { 0x20, 0xE7, jr_cc     , "jr %s,",         1 },
-   { 0x22, 0xFF, prt_nn    , "ld (0x%04x),hl", 3 },
-   { 0x27, 0xFF, prt       , "daa",            1 },
-   { 0x2A, 0xFF, prt_nn    , "ld hl,(0x%04x)", 3 },
-   { 0x2F, 0xFF, prt       , "cpl",            1 },
-   { 0x32, 0xFF, prt_nn    , "ld (0x%04x),a",  3 },
-   { 0x37, 0xFF, prt       , "scf",            1 },
-   { 0x3A, 0xFF, prt_nn    , "ld a,(0x%04x)",  3 },
-   { 0x3F, 0xFF, prt       , "ccf",            1 },
+   { 0x00, 0xFF, prt       , "",            1 },
+   { 0x01, 0xCF, prt_rr_nn , "",  3 },
+   { 0x02, 0xFF, prt       , "",      1 },
+   { 0x03, 0xCF, prt_rr    , "" ,          1 },
+   { 0x04, 0xC7, prt_r     , "",         1 },
+   { 0x05, 0xC7, prt_r     , "",         1 },
+   { 0x06, 0xC7, ld_r_n    , "",  2 },
+   { 0x07, 0xFF, prt       , "",           1 },
+   { 0x08, 0xFF, prt       , "",      1 },
+   { 0x09, 0xCF, prt_rr    , "",        1 },
+   { 0x0A, 0xFF, prt       , "" ,     1 },
+   { 0x0B, 0xCF, prt_rr    , "",           1 },
+   { 0x0F, 0xFF, prt       , "",           1 },
+   { 0x10, 0xFF, pe_djnz   , "",          2 },
+   { 0x12, 0xFF, prt       , "",      1 },
+   { 0x17, 0xFF, prt       , "",            1 },
+   { 0x18, 0xFF, prt_e     , "",            2 },
+   { 0x1A, 0xFF, prt       , "",      1 },
+   { 0x1F, 0xFF, prt       , "",            1 },
+   { 0x20, 0xE7, jr_cc     , "",         1 },
+   { 0x22, 0xFF, prt_nn    , "", 3 },
+   { 0x27, 0xFF, prt       , "",            1 },
+   { 0x2A, 0xFF, prt_nn    , "", 3 },
+   { 0x2F, 0xFF, prt       , "",            1 },
+   { 0x32, 0xFF, prt_nn    , "",  3 },
+   { 0x37, 0xFF, prt       , "",            1 },
+   { 0x3A, 0xFF, prt_nn    , "",  3 },
+   { 0x3F, 0xFF, prt       , "",            1 },
 
-   { 0x76, 0xFF, prt       , "halt",           1 },
-   { 0x40, 0xC0, ld_r_r    , "ld %s,%s",       1 },
+   { 0x76, 0xFF, prt       , "",           1 },
+   { 0x40, 0xC0, ld_r_r    , "",       1 },
 
-   { 0x80, 0xC0, arit_r    , "%s%s",           1 },
+   { 0x80, 0xC0, arit_r    , "",           1 },
 
-   { 0xC0, 0xC7, prt_cc    , "ret ",           1 },
-   { 0xC1, 0xCF, pop_rr    , "pop",            1 },
-   { 0xC2, 0xC7, jp_cc_nn  , "jp ",            3 },
-   { 0xC3, 0xFF, prt_nn    , "jp 0x%04x",      3 },
-   { 0xC4, 0xC7, jp_cc_nn  , "call ",          3 },
-   { 0xC5, 0xCF, pop_rr    , "push",           1 }, 
-   { 0xC6, 0xC7, arit_n    , "%s0x%%02x",      2 },
-   { 0xC7, 0xC7, rst       , "rst 0x%02x",     1 },
-   { 0xC9, 0xFF, prt       , "ret",            1 },
+   { 0xC0, 0xC7, prt_cc    , "",           1 },
+   { 0xC1, 0xCF, pop_rr    , "",            1 },
+   { 0xC2, 0xC7, jp_cc_nn  , "",            3 },
+   { 0xC3, 0xFF, prt_nn    , "",      3 },
+   { 0xC4, 0xC7, jp_cc_nn  , "",          3 },
+   { 0xC5, 0xCF, pop_rr    , "",           1 }, 
+   { 0xC6, 0xC7, arit_n    , "",      2 },
+   { 0xC7, 0xC7, rst       , "",     1 },
+   { 0xC9, 0xFF, prt       , "",            1 },
    { 0xCB, 0xFF, pref_cb   , "",               0 },
-   { 0xCD, 0xFF, prt_nn    , "call 0x%04x",    3 },
-   { 0xD3, 0xFF, prt_n     , "out (0x%02x),a", 2 },
-   { 0xD9, 0xFF, prt       , "exx",            1 },
-   { 0xDB, 0xFF, prt_n     , "in a,(0x%02x)",  2 },
-   { 0xDD, 0xFF, pref_ind  , "ix",             0 },
-   { 0xE3, 0xFF, prt       , "ex (sp),hl",     1 },
-   { 0xE9, 0xFF, prt       , "jp (hl)",        1 },
-   { 0xEB, 0xFF, prt       , "ex de,hl",       1 },
+   { 0xCD, 0xFF, prt_nn    , "",    3 },
+   { 0xD3, 0xFF, prt_n     , "", 2 },
+   { 0xD9, 0xFF, prt       , "",            1 },
+   { 0xDB, 0xFF, prt_n     , "",  2 },
+   { 0xDD, 0xFF, pref_ind  , "",             0 },
+   { 0xE3, 0xFF, prt       , "",     1 },
+   { 0xE9, 0xFF, prt       , "",        1 },
+   { 0xEB, 0xFF, prt       , "",       1 },
    { 0xED, 0xFF, pref_ed   , "",               0 },
-   { 0xF3, 0xFF, prt       , "di",             1 },
-   { 0xF9, 0xFF, prt       , "ld sp,hl",       1 },
-   { 0xFB, 0xFF, prt       , "ei",             1 },
-   { 0xFD, 0xFF, pref_ind  , "iy",             0 },
-   { 0x00, 0x00, prt       , "????"          , 1 },
+   { 0xF3, 0xFF, prt       , "",             1 },
+   { 0xF9, 0xFF, prt       , "",       1 },
+   { 0xFB, 0xFF, prt       , "",             1 },
+   { 0xFD, 0xFF, pref_ind  , "",             0 },
+   { 0x00, 0x00, prt       , ""          , 1 },
  } ;
+
+
+
 
  void
  INIT (void)
@@ -697,6 +762,7 @@ struct tab_elt
  doSStep (void)
  {
    char *instrMem;
+   char *nextInstrMem;
  ///LLL   int displacement;
  ///LLL   int reg;
    unsigned short opcode;
@@ -711,6 +777,9 @@ struct tab_elt
 
    for (p = opc_main; p->val != (opcode & p->mask); ++p)
      ;
+
+   nextInstrMem = (char *) p->fp(instrMem, p);
+
 
  /// LLL   if ((opcode & COND_BR_MASK) == BT_INSTR)
  /// LLL     {
@@ -770,7 +839,8 @@ struct tab_elt
  /// LLL     instrMem = (short *) ((opcode & ~TRAPA_MASK) << 2);
  /// LLL   else
  /// LLL     instrMem += 1;
-   instrMem += p->inst_len;
+
+   instrMem = nextInstrMem;
 
    instrBuffer.memAddr = instrMem;
    instrBuffer.oldInstr = *instrMem;
@@ -1334,16 +1404,17 @@ handleError (char theSSR)
 
 // --------------------
 
-static int
-prt (struct buffer *buf, char * info, char *txt)
+static void *
+prt (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, "%s", txt);
 //   buf->n_used = buf->n_fetch;
-  return 1;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
-static int
-prt_e (struct buffer *buf, char * info, char *txt)
+static void *
+prt_e (void *pc, struct tab_elt *inst)
 {
 //   char e;
 //   int target_addr;
@@ -1358,20 +1429,21 @@ prt_e (struct buffer *buf, char * info, char *txt)
 //   else
 //     buf->n_used = -1;
 
-  return buf->n_used;
+//  return buf->n_used;
+  return pc + inst->inst_len;
 }
 
-static int
-jr_cc (struct buffer *buf, char * info, char *txt)
+static void *
+jr_cc (void *pc, struct tab_elt *inst)
 {
   char mytxt[TXTSIZ];
 // 
 //   snprintf (mytxt, TXTSIZ, txt, cc_str[(buf->data[0] >> 3) & 3]);
-  return prt_e (buf, info, mytxt);
+  return prt_e (pc, inst);
 }
 
-static int
-prt_nn (struct buffer *buf, char * info, char *txt)
+static void *
+prt_nn (void *pc, struct tab_elt *inst)
 {
 //   int nn;
 //   unsigned char *p;
@@ -1385,31 +1457,36 @@ prt_nn (struct buffer *buf, char * info, char *txt)
 //     }
 //   else
 //     buf->n_used = -1;
-  return buf->n_used;
+//  return buf->n_used;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
-static int
-prt_rr_nn (struct buffer *buf, char * info, char *txt)
+static void *
+prt_rr_nn (void *pc, struct tab_elt *inst)
 {
    char mytxt[TXTSIZ];
 //   int rr;
 // 
 //   rr = (buf->data[buf->n_fetch - 1] >> 4) & 3; 
 //   snprintf (mytxt, TXTSIZ, txt, rr_str[rr]);
-  return prt_nn (buf, info, mytxt);
+//   return prt_nn (buf, info, mytxt);
+
+   return pc + inst->inst_len;
 }
 
-static int
-prt_rr (struct buffer *buf, char * info, char *txt)
+static void *
+prt_rr (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, "%s%s", txt,
 // 		      rr_str[(buf->data[buf->n_fetch - 1] >> 4) & 3]);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//   return buf->n_used;
+  return pc + inst->inst_len;
 }
 
-static int
-prt_n (struct buffer *buf, char * info, char *txt)
+static void *
+prt_n  (void *pc, struct tab_elt *inst)
 {
 //   int n;
 //   unsigned char *p;
@@ -1425,98 +1502,111 @@ prt_n (struct buffer *buf, char * info, char *txt)
 //   else
 //     buf->n_used = -1;
 
-  return buf->n_used;
+//  return buf->n_used;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
-static int
-ld_r_n (struct buffer *buf, char * info, char *txt)
+static void *
+ld_r_n  (void *pc, struct tab_elt *inst)
 {
    char mytxt[TXTSIZ];
 // 
 //   snprintf (mytxt, TXTSIZ, txt, r_str[(buf->data[0] >> 3) & 7]);
-  return prt_n (buf, info, mytxt);
+//   return prt_n (buf, info, mytxt);
+   return prt_n(pc, inst);
 }
 
-static int
-prt_r (struct buffer *buf, char * info, char *txt)
+static void *
+prt_r (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt,
 // 		      r_str[(buf->data[buf->n_fetch - 1] >> 3) & 7]);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//   return buf->n_used;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
-static int
-ld_r_r (struct buffer *buf, char * info, char *txt)
+static void *
+ld_r_r (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt,
 // 		      r_str[(buf->data[buf->n_fetch - 1] >> 3) & 7],
 // 		      r_str[buf->data[buf->n_fetch - 1] & 7]);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//   return buf->n_used;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
-static int
-arit_r (struct buffer *buf, char * info, char *txt)
+static void *
+arit_r (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt,
 // 		      arit_str[(buf->data[buf->n_fetch - 1] >> 3) & 7],
 // 		      r_str[buf->data[buf->n_fetch - 1] & 7]);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//   return buf->n_used;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
-static int
-prt_cc (struct buffer *buf, char * info, char *txt)
+static void *
+prt_cc (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, "%s%s", txt,
 // 		      cc_str[(buf->data[0] >> 3) & 7]);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//   return buf->n_used;
+  return pc + inst->inst_len;
 }
 
-static int
-pop_rr (struct buffer *buf, char * info, char *txt)
+static void *
+pop_rr (void *pc, struct tab_elt *inst)
 {
 //   static char *rr_stack[] = { "bc","de","hl","af"};
 // 
 //   info->fprintf_func (info->stream, "%s %s", txt,
 // 		      rr_stack[(buf->data[0] >> 4) & 3]);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//   return buf->n_used;
+  char *cpc = (char *)pc;
+  return (cpc + inst->inst_len);
 }
 
 
-static int
-jp_cc_nn (struct buffer *buf, char * info, char *txt)
+static void *
+jp_cc_nn (void *pc, struct tab_elt *inst)
 {
   char mytxt[TXTSIZ];
 // 
 //   snprintf (mytxt,TXTSIZ,
 // 	    "%s%s,0x%%04x", txt, cc_str[(buf->data[0] >> 3) & 7]);
-  return prt_nn (buf, info, mytxt);
+  return prt_nn (pc, inst);
+
 }
 
-static int
-arit_n (struct buffer *buf, char * info, char *txt)
+static void *
+arit_n (void *pc, struct tab_elt *inst)
 {
   char mytxt[TXTSIZ];
 // 
 //   snprintf (mytxt,TXTSIZ, txt, arit_str[(buf->data[0] >> 3) & 7]);
-  return prt_n (buf, info, mytxt);
+  return prt_n (pc, inst);
 }
 
-static int
-rst (struct buffer *buf, char * info, char *txt)
+static void *
+rst (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt, buf->data[0] & 0x38);
 //   buf->n_used = buf->n_fetch;
-  return buf->n_used;
+//  return buf->n_used;
+  return pc + inst->inst_len;
 }
 
-static int
-pref_cb (struct buffer * buf, char * info,
-	 char* txt)
+static void *
+pref_cb (void *pc, struct tab_elt *inst)
 {
 //   if (fetch_data (buf, info, 1))
 //     {
@@ -1534,11 +1624,12 @@ pref_cb (struct buffer * buf, char * info,
 //   else
 //     buf->n_used = -1;
 
-  return buf->n_used;
+//  return buf->n_used;
+  return pc + inst->inst_len;
 }
 
-static int
-pref_ind (struct buffer * buf, char * info, char* txt)
+static void *
+pref_ind (void *pc, struct tab_elt *inst)
 {
 //   if (fetch_data (buf, info, 1))
 //     {
@@ -1553,11 +1644,13 @@ pref_ind (struct buffer * buf, char * info, char* txt)
 //   else
 //     buf->n_used = -1;
 
-  return buf->n_used;
+//  return buf->n_used;
+
+  return pc + inst->inst_len;
 }
 
-static int
-pref_xd_cb (struct buffer * buf, char * info, char* txt)
+static void *
+pref_xd_cb (void *pc, struct tab_elt *inst)
 {
 //   if (fetch_data (buf, info, 2))
 //     {
@@ -1587,12 +1680,13 @@ pref_xd_cb (struct buffer * buf, char * info, char* txt)
 //   else
 //     buf->n_used = -1;
 
-  return buf->n_used;
+//  return buf->n_used;
+
+  return pc + inst->inst_len;
 }
 
-static int
-pref_ed (struct buffer * buf, char * info, 
-	 char* txt)
+static void *
+pref_ed (void *pc, struct tab_elt *inst)
 {
 //  struct tab_elt *p;
 //
@@ -1605,9 +1699,27 @@ pref_ed (struct buffer * buf, char * info,
 //  else
 //    buf->n_used = -1;
 
-  return buf->n_used;
+//  return buf->n_used;
+
+  return pc + inst->inst_len;
+
 }
 // -------------------- 
+
+//---------- CONTROL JUMP INSTRUCTIONS PSEUDO EVAL FUNCTIONS ----------
+void *
+pe_djnz (void *pc, struct tab_elt *inst)
+{
+  char *cpc = (char *)pc;
+
+  if (registers.a - 1 == 0)
+    return (cpc + inst->inst_len); 
+  else
+    {    // result of dec wasn't Z, so we jump e
+      int e = cpc[1];
+      return (cpc + e + 2);
+    }
+}
 
 /* pacify the compiler */
 void main () {}
