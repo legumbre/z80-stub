@@ -250,8 +250,8 @@ char getDebugChar (void);
 void breakpoint() __naked;
 
 
-#define init_stack_size 1024  /* if you change this you should also modify BINIT */
-#define stub_stack_size 1024
+#define init_stack_size 512  /* if you change this you should also modify BINIT */
+#define stub_stack_size 512
 
 int init_stack[init_stack_size];//  __attribute__ ((section ("stack"))) = {0};
 int stub_stack[stub_stack_size];//  __attribute__ ((section ("stack"))) = {0};
@@ -283,22 +283,6 @@ int *stub_sp;
 /* debug > 0 prints ill-formed commands in valid packets & checksum errors */
 int remote_debug;
 
-/// enum regnames
-///   {
-///     A, F, BC, DE, HL, IX, IY, SP, I, R,
-///     AX, FX, BCX, DEX, HLX, PC,
-///     NUM_REGISTERS
-///   };
-
-typedef struct
-  {
-    char *memAddr;
-    // LLL short oldInstr;
-    char oldInstr;
-  }
-stepData;
-
-
 struct {
   char a;
   char f;
@@ -317,6 +301,14 @@ struct {
   short hlx;
   short pc; } registers;
 
+typedef struct
+  {
+    char *memAddr;
+    // LLL short oldInstr;
+    char oldInstr;
+  }
+stepData;
+
 // int registers[NUM_REGISTERS];
 stepData instrBuffer;
 char stepped;
@@ -324,663 +316,747 @@ static const char hexchars[] = "0123456789abcdef";
 static char remcomInBuffer[BUFMAX];
 static char remcomOutBuffer[BUFMAX];
 
-
-void
-INIT (void)
+struct buffer
 {
-  __asm
-    jp    _RESET
-    nop
-    nop
-    nop
-    nop
-    nop
-    push  hl               ;; RST 08, used for breakpoints
-    ld    hl,#08           ;; 08 means a breakpoint was hit, pass it to sr routine
-    jp    _sr              ;; TODO maybe change to saveRegisters, semantics
+  void* base;
+  int n_fetch;
+  int n_used;
+  signed char data[4];
+} ;
+
+struct tab_elt
+{
+  unsigned char val;
+  unsigned char mask;
+  Function      fp;
+  char *        text;
+  unsigned char inst_len;
+} ;
+
+ #define TXTSIZ 24
+
+ /* Table to disassemble machine codes without prefix.  */
+ static struct tab_elt opc_main[] =
+ {
+   { 0x00, 0xFF, prt       , "nop",            1 },
+   { 0x01, 0xCF, prt_rr_nn , "ld %s,0x%%04x",  3 },
+   { 0x02, 0xFF, prt       , "ld (bc),a",      1 },
+   { 0x03, 0xCF, prt_rr    , "inc " ,          1 },
+   { 0x04, 0xC7, prt_r     , "inc %s",         1 },
+   { 0x05, 0xC7, prt_r     , "dec %s",         1 },
+   { 0x06, 0xC7, ld_r_n    , "ld %s,0x%%02x",  2 },
+   { 0x07, 0xFF, prt       , "rlca",           1 },
+   { 0x08, 0xFF, prt       , "ex af,af'",      1 },
+   { 0x09, 0xCF, prt_rr    , "add hl,",        1 },
+   { 0x0A, 0xFF, prt       , "ld a,(bc)" ,     1 },
+   { 0x0B, 0xCF, prt_rr    , "dec ",           1 },
+   { 0x0F, 0xFF, prt       , "rrca",           1 },
+   { 0x10, 0xFF, prt_e     , "djnz ",          2 },
+   { 0x12, 0xFF, prt       , "ld (de),a",      1 },
+   { 0x17, 0xFF, prt       , "rla",            1 },
+   { 0x18, 0xFF, prt_e     , "jr ",            2 },
+   { 0x1A, 0xFF, prt       , "ld a,(de)",      1 },
+   { 0x1F, 0xFF, prt       , "rra",            1 },
+   { 0x20, 0xE7, jr_cc     , "jr %s,",         1 },
+   { 0x22, 0xFF, prt_nn    , "ld (0x%04x),hl", 3 },
+   { 0x27, 0xFF, prt       , "daa",            1 },
+   { 0x2A, 0xFF, prt_nn    , "ld hl,(0x%04x)", 3 },
+   { 0x2F, 0xFF, prt       , "cpl",            1 },
+   { 0x32, 0xFF, prt_nn    , "ld (0x%04x),a",  3 },
+   { 0x37, 0xFF, prt       , "scf",            1 },
+   { 0x3A, 0xFF, prt_nn    , "ld a,(0x%04x)",  3 },
+   { 0x3F, 0xFF, prt       , "ccf",            1 },
+
+   { 0x76, 0xFF, prt       , "halt",           1 },
+   { 0x40, 0xC0, ld_r_r    , "ld %s,%s",       1 },
+
+   { 0x80, 0xC0, arit_r    , "%s%s",           1 },
+
+   { 0xC0, 0xC7, prt_cc    , "ret ",           1 },
+   { 0xC1, 0xCF, pop_rr    , "pop",            1 },
+   { 0xC2, 0xC7, jp_cc_nn  , "jp ",            3 },
+   { 0xC3, 0xFF, prt_nn    , "jp 0x%04x",      3 },
+   { 0xC4, 0xC7, jp_cc_nn  , "call ",          3 },
+   { 0xC5, 0xCF, pop_rr    , "push",           1 }, 
+   { 0xC6, 0xC7, arit_n    , "%s0x%%02x",      2 },
+   { 0xC7, 0xC7, rst       , "rst 0x%02x",     1 },
+   { 0xC9, 0xFF, prt       , "ret",            1 },
+   { 0xCB, 0xFF, pref_cb   , "",               0 },
+   { 0xCD, 0xFF, prt_nn    , "call 0x%04x",    3 },
+   { 0xD3, 0xFF, prt_n     , "out (0x%02x),a", 2 },
+   { 0xD9, 0xFF, prt       , "exx",            1 },
+   { 0xDB, 0xFF, prt_n     , "in a,(0x%02x)",  2 },
+   { 0xDD, 0xFF, pref_ind  , "ix",             0 },
+   { 0xE3, 0xFF, prt       , "ex (sp),hl",     1 },
+   { 0xE9, 0xFF, prt       , "jp (hl)",        1 },
+   { 0xEB, 0xFF, prt       , "ex de,hl",       1 },
+   { 0xED, 0xFF, pref_ed   , "",               0 },
+   { 0xF3, 0xFF, prt       , "di",             1 },
+   { 0xF9, 0xFF, prt       , "ld sp,hl",       1 },
+   { 0xFB, 0xFF, prt       , "ei",             1 },
+   { 0xFD, 0xFF, pref_ind  , "iy",             0 },
+   { 0x00, 0x00, prt       , "????"          , 1 },
+ } ;
+
+ void
+ INIT (void)
+ {
+   __asm
+     jp    _RESET
+     nop
+     nop
+     nop
+     nop
+     nop
+     push  hl               ;; RST 08, used for breakpoints
+     ld    hl,#08           ;; 08 means a breakpoint was hit, pass it to sr routine
+     jp    _sr              ;; TODO maybe change to saveRegisters, semantics
+
+    __endasm;
+ }
+
+ void
+ RESET (void) __naked
+ {
+
+ #ifdef MONITOR
+   reset_hook ();
+ #endif
+
+   in_nmi = 0;
+   dofault = 1;
+   stepped = 0;
+
+   stub_sp = stub_stack + stub_stack_size;
+   breakpoint();
+
+   while (1)
+     ;
+ }
+
+ char highhex(int  x)
+ {
+   return hexchars[(x >> 4) & 0xf];
+ }
+
+ char lowhex(int  x)
+ {
+   return hexchars[x & 0xf];
+ }
+
+ /*
+  * Assembly macros
+  */
+
+
+ /*
+  * Routines to handle hex data
+  */
+
+ static int
+ hex (char ch)
+ {
+   if ((ch >= 'a') && (ch <= 'f'))
+     return (ch - 'a' + 10);
+   if ((ch >= '0') && (ch <= '9'))
+     return (ch - '0');
+   if ((ch >= 'A') && (ch <= 'F'))
+     return (ch - 'A' + 10);
+   return (-1);
+ }
+
+ /* convert the memory, pointed to by mem into hex, placing result in buf */
+ /* return a pointer to the last char put in buf (null) */
+ static char *
+ mem2hex (char *mem, char *buf, int count)
+ {
+   int i;
+   int ch;
+   for (i = 0; i < count; i++)
+     {
+       ch = *mem++;
+       *buf++ = highhex (ch);
+       *buf++ = lowhex (ch);
+     }
+   *buf = 0;
+   return (buf);
+ }
+
+ /* convert the hex array pointed to by buf into binary, to be placed in mem */
+ /* return a pointer to the character after the last byte written */
+
+ static char *
+ hex2mem (char *buf, char *mem, int count)
+ {
+   int i;
+   unsigned char ch;
+   for (i = 0; i < count; i++)
+     {
+       ch = hex (*buf++) << 4;
+       ch = ch + hex (*buf++);
+       *mem++ = ch;
+     }
+   return (mem);
+ }
+
+ /**********************************************/
+ /* WHILE WE FIND NICE HEX CHARS, BUILD AN INT */
+ /* RETURN NUMBER OF CHARS PROCESSED           */
+ /**********************************************/
+ static int
+ hexToInt (char **ptr, int *intValue)
+ {
+   int numChars = 0;
+   int hexValue;
+
+   *intValue = 0;
+
+   while (**ptr)
+     {
+       hexValue = hex (**ptr);
+       if (hexValue >= 0)
+         {
+           *intValue = (*intValue << 4) | hexValue;
+           numChars++;
+         }
+       else
+         break;
+
+       (*ptr)++;
+     }
+
+   return (numChars);
+ }
+
+ /*
+  * Routines to get and put packets
+  */
+
+ /* scan for the sequence $<data>#<checksum>     */
+
+ char *
+ getpacket (void)
+ {
+   unsigned char *buffer = &remcomInBuffer[0];
+   unsigned char checksum;
+   unsigned char xmitcsum;
+   int count;
+   char ch;
+
+   while (1)
+     {
+       /* wait around for the start character, ignore all other characters */
+       while ((ch = getDebugChar ()) != '$')
+         ;
+
+ retry:
+       checksum = 0;
+       xmitcsum = -1;
+       count = 0;
+
+       /* now, read until a # or end of buffer is found */
+       while (count < BUFMAX - 1)
+         {
+           ch = getDebugChar ();
+           if (ch == '$')
+             goto retry;
+           if (ch == '#')
+             break;
+           checksum = checksum + ch;
+           buffer[count] = ch;
+           count = count + 1;
+         }
+       buffer[count] = 0;
+
+       if (ch == '#')
+         {
+           ch = getDebugChar ();
+           xmitcsum = hex (ch) << 4;
+           ch = getDebugChar ();
+           xmitcsum += hex (ch);
+
+           if (checksum != xmitcsum)
+             {
+               putDebugChar ('-');       /* failed checksum */
+             }
+           else
+             {
+               putDebugChar ('+');       /* successful transfer */
+
+               /* if a sequence char is present, reply the sequence ID */
+               if (buffer[2] == ':')
+                 {
+                   putDebugChar (buffer[0]);
+                   putDebugChar (buffer[1]);
+
+                   return &buffer[3];
+                 }
+
+               return &buffer[0];
+             }
+         }
+     }
+ }
+
+
+ /* send the packet in buffer. */
+
+ static void
+ putpacket (char *buffer)
+ {
+   int checksum;
+
+   /*  $<packet info>#<checksum>. */
+   do
+     {
+       char *src = buffer;
+       putDebugChar ('$');
+       checksum = 0;
+
+       while (*src)
+         {
+           int runlen;
+
+           /* Do run length encoding */
+           for (runlen = 0; runlen < 100; runlen ++) 
+             {
+               if (src[0] != src[runlen]) 
+                 {
+                   if (runlen > 3) 
+                     {
+                       int encode;
+                       /* Got a useful amount */
+                       putDebugChar (*src);
+                       checksum += *src;
+                       putDebugChar ('*');
+                       checksum += '*';
+                       checksum += (encode = runlen + ' ' - 4);
+                       putDebugChar (encode);
+                       src += runlen;
+                     }
+                   else
+                     {
+                       putDebugChar (*src);
+                       checksum += *src;
+                       src++;
+                     }
+                   break;
+                 }
+             }
+         }
+
+
+       putDebugChar ('#');
+       putDebugChar (highhex(checksum));
+       putDebugChar (lowhex(checksum));
+     }
+   while  (getDebugChar() != '+');
+ }
+
+
+ /*
+  * this function takes the SH-1 exception number and attempts to
+  * translate this number into a unix compatible signal value
+  */
+ static int
+ computeSignal (int exceptionVector)
+ {
+   int sigval;
+   switch (exceptionVector)
+     {
+     case INVALID_INSN_VEC:
+       sigval = 4;
+       break;                    
+     case INVALID_SLOT_VEC:
+       sigval = 4;
+       break;                    
+     case CPU_BUS_ERROR_VEC:
+       sigval = 10;
+       break;                    
+     case DMA_BUS_ERROR_VEC:
+       sigval = 10;
+       break;    
+     case NMI_VEC:
+       sigval = 2;
+       break;    
+
+     case TRAP_VEC:
+     case USER_VEC:
+     case Z80_RST08_VEC:
+       sigval = 5;
+       break;
+
+     default:
+       sigval = 7;               /* "software generated"*/
+       break;
+     }
+   return (sigval);
+ }
+
+ void
+ doSStep (void)
+ {
+   char *instrMem;
+ ///LLL   int displacement;
+ ///LLL   int reg;
+   unsigned short opcode;
+
+   struct tab_elt *p;
+
+   //instrMem = (short *) registers[PC];
+   instrMem = (char *) registers.pc;
+
+   opcode = *instrMem;
+   stepped = 1;
+
+   for (p = opc_main; p->val != (opcode & p->mask); ++p)
+     ;
+
+ /// LLL   if ((opcode & COND_BR_MASK) == BT_INSTR)
+ /// LLL     {
+ /// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
+ /// LLL         {
+ /// LLL           displacement = (opcode & COND_DISP) << 1;
+ /// LLL           if (displacement & 0x80)
+ /// LLL             displacement |= 0xffffff00;
+ /// LLL           /*
+ /// LLL                    * Remember PC points to second instr.
+ /// LLL                    * after PC of branch ... so add 4
+ /// LLL                    */
+ /// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
+ /// LLL         }
+ /// LLL       else
+ /// LLL         instrMem += 1;
+ /// LLL     }
+ /// LLL   else if ((opcode & COND_BR_MASK) == BF_INSTR)
+ /// LLL     {
+ /// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
+ /// LLL         instrMem += 1;
+ /// LLL       else
+ /// LLL         {
+ /// LLL           displacement = (opcode & COND_DISP) << 1;
+ /// LLL           if (displacement & 0x80)
+ /// LLL             displacement |= 0xffffff00;
+ /// LLL           /*
+ /// LLL                    * Remember PC points to second instr.
+ /// LLL                    * after PC of branch ... so add 4
+ /// LLL                    */
+ /// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
+ /// LLL         }
+ /// LLL     }
+ /// LLL   else if ((opcode & UCOND_DBR_MASK) == BRA_INSTR)
+ /// LLL     {
+ /// LLL       displacement = (opcode & UCOND_DISP) << 1;
+ /// LLL       if (displacement & 0x0800)
+ /// LLL         displacement |= 0xfffff000;
+ /// LLL 
+ /// LLL       /*
+ /// LLL            * Remember PC points to second instr.
+ /// LLL            * after PC of branch ... so add 4
+ /// LLL            */
+ /// LLL       instrMem = (short *) (registers[PC] + displacement + 4);
+ /// LLL     }
+ /// LLL   else if ((opcode & UCOND_RBR_MASK) == JSR_INSTR)
+ /// LLL     {
+ /// LLL       reg = (char) ((opcode & UCOND_REG) >> 8);
+ /// LLL 
+ /// LLL       instrMem = (short *) registers[reg];
+ /// LLL     }
+ /// LLL   else if (opcode == RTS_INSTR)
+ /// LLL     ; // instrMem = (short *) registers[PR];
+ /// LLL   else if (opcode == RTE_INSTR)
+ /// LLL     instrMem = (short *) registers[15];
+ /// LLL   else if ((opcode & TRAPA_MASK) == TRAPA_INSTR)
+ /// LLL     instrMem = (short *) ((opcode & ~TRAPA_MASK) << 2);
+ /// LLL   else
+ /// LLL     instrMem += 1;
+   instrMem += p->inst_len;
+
+   instrBuffer.memAddr = instrMem;
+   instrBuffer.oldInstr = *instrMem;
+   *instrMem = SSTEP_INSTR;
+ }
+
+
+ /* Undo the effect of a previous doSStep.  If we single stepped,
+    restore the old instruction. */
+
+ void
+ undoSStep (void)
+ {
+ /// LLL   if (stepped)
+ /// LLL     {  short *instrMem;
+ /// LLL       instrMem = instrBuffer.memAddr;
+ /// LLL       *instrMem = instrBuffer.oldInstr;
+ /// LLL     }
+   if (stepped)
+     { char *instrMem;
+       instrMem = instrBuffer.memAddr;
+       *instrMem = instrBuffer.oldInstr;
+     }
+   stepped = 0;
+ }
+
+ /*
+ This function does all exception handling.  It only does two things -
+ it figures out why it was called and tells gdb, and then it reacts
+ to gdb's requests.
+
+ When in the monitor mode we talk a human on the serial line rather than gdb.
+
+ */
+ void
+ gdb_handle_exception (int exceptionVector)
+ {
+   int sigval, stepping;
+   int addr, length;
+   char *ptr;
+
+   /* reply to host that an exception has occurred */
+   sigval = computeSignal (exceptionVector);
+   remcomOutBuffer[0] = 'S';
+   remcomOutBuffer[1] = highhex(sigval);
+   remcomOutBuffer[2] = lowhex (sigval);
+   remcomOutBuffer[3] = 0;
+
+   putpacket (remcomOutBuffer);
+
+   /*
+    * Exception 0x08 means a RST 08 instruction (breakpoint) inserted in
+    * place of code
+    * 
+    * Backup PC by one instruction, this instruction will later
+    * be replaced by the original instruction at the breakpoint
+    */
+   if (exceptionVector == 0x08)
+     registers.pc -= 1;
+     // registers[R_PC] -= 1;
+
+   /*
+    * Do the thangs needed to undo
+    * any stepping we may have done!
+    */
+   undoSStep ();
+
+   stepping = 0;
+
+   while (1)
+     {
+       remcomOutBuffer[0] = 0;
+       ptr = getpacket ();
+
+       switch (*ptr++)
+         {
+         case '?':
+           remcomOutBuffer[0] = 'S';
+           remcomOutBuffer[1] = highhex (sigval);
+           remcomOutBuffer[2] = lowhex (sigval);
+           remcomOutBuffer[3] = 0;
+           break;
+         case 'd':
+           remote_debug = !(remote_debug);       /* toggle debug flag */
+           break;
+         case 'g':               /* return the value of the CPU registers */
+           mem2hex ((char *) registers, remcomOutBuffer, NUMREGBYTES);
+           break;
+         case 'G':               /* set the value of the CPU registers - return OK */
+           hex2mem (ptr, (char *) registers, NUMREGBYTES);
+           strcpy (remcomOutBuffer, "OK");
+           break;
+
+           /* mAA..AA,LLLL  Read LLLL bytes at address AA..AA */
+         case 'm':
+           dofault = 0;
+           /* TRY, TO READ %x,%x.  IF SUCCEED, SET PTR = 0 */
+           if (hexToInt (&ptr, &addr))
+             if (*(ptr++) == ',')
+               if (hexToInt (&ptr, &length))
+                 {
+                   ptr = 0;
+                   mem2hex ((char *) addr, remcomOutBuffer, length);
+                 }
+           if (ptr)
+             strcpy (remcomOutBuffer, "E01");
+
+           break;
+
+           /* MAA..AA,LLLL: Write LLLL bytes at address AA.AA return OK */
+         case 'M':
+           /* TRY, TO READ '%x,%x:'.  IF SUCCEED, SET PTR = 0 */
+           if (hexToInt (&ptr, &addr))
+             if (*(ptr++) == ',')
+               if (hexToInt (&ptr, &length))
+                 if (*(ptr++) == ':')
+                   {
+                     hex2mem (ptr, (char *) addr, length);
+                     ptr = 0;
+                     strcpy (remcomOutBuffer, "OK");
+                   }
+           if (ptr)
+             strcpy (remcomOutBuffer, "E02");
+
+           break;
+
+           /* cAA..AA    Continue at address AA..AA(optional) */
+           /* sAA..AA   Step one instruction from AA..AA(optional) */
+         case 's':
+           stepping = 1;
+         case 'c':
+           {
+             /* tRY, to read optional parameter, pc unchanged if no parm */
+             if (hexToInt (&ptr, &addr))
+               registers.pc = addr;
+               //registers[R_PC] = addr;
+             if (stepping)
+               doSStep ();
+           }
+           return;
+           break;
+
+           /* kill the program */
+         case 'k':               /* do nothing */
+           break;
+         }                       /* switch */
+
+       /* reply to the request */
+       putpacket (remcomOutBuffer);
+     }
+ }
+
+
+ #define GDBCOOKIE 0x5ac 
+ static int ingdbmode;
+ void handle_exception(int exceptionVector)
+ {
+   gdb_handle_exception (exceptionVector);
+ }
+
+ void
+ gdb_mode (void)
+ {
+   ingdbmode = GDBCOOKIE;
+   breakpoint();
+ }
+ /* This function will generate a breakpoint exception.  It is used at the
+    beginning of a program to sync up with a debugger and can be used
+    otherwise as a quick means to stop program execution and "break" into
+    the debugger. */
+ void
+ breakpoint (void) __naked
+ {
+   __asm              
+   nop                
+   nop                
+   nop                
+   RST 08             
+   nop                
+   nop                
+   jp  0xb000        
+   nop                
+   nop                
+   __endasm;          
+ }
+
+
+void sr() __naked
+ {
+ //          /* Calling Reset does the same as pressing the button */
+ //          asm (".global _Reset
+ //                .global _WarmReset
+ //        _Reset:
+ //        _WarmReset:
+ //                 mov.l L_sp,r15
+ //                 bra   _INIT
+ //                 nop
+ //                 .align 2
+ //        L_sp:    .long _init_stack + 8000");
+
+   /* saveRegisters routine */
+  saveRegisters:
+   __asm
+     ld    (#_intcause), hl        ;; argument passed in hl signals the exception cause
+     pop   hl                      ;; recover original hl before hitting the breakpoint
+
+     ld    (#_registers + R_HL), hl
+     push  af                      ;; dirty trick to save AF
+     pop   hl
+     ld    a,h
+     ld    (#_registers + R_A), a   
+     ld    a,l
+     ld    (#_registers + R_F), a    
+
+     ld    (#_registers + R_BC), bc
+     ld    (#_registers + R_DE), de
+     ld    (#_registers + R_IX), ix
+     ld    (#_registers + R_IY), iy
+
+     ;; alternate register set
+     exx
+     ex   af,af'                     ;;'
+
+     ld    (#_registers + R_HLX), hl
+
+     push  af ;; dirty trick to save AF
+     pop   hl
+     ld    (#_registers + R_AX),  hl  ;; saves both A and F (because R_FX == R_AX+1)
+     ld    (#_registers + R_BCX), bc
+     ld    (#_registers + R_DEX), de
+
+     ;; switch back to original reg set
+     ex   af,af'                     ;;'
+     exx
+
+     pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
+     ld   (#_registers + R_PC), hl
+     push hl
+
+     ld    hl, (#_intcause)
+     push  hl
+     call  _handle_exception              
+     pop   af      
 
    __endasm;
-}
 
-void
-RESET (void) __naked
-{
-  // commented out for qemu debugging
-  // init_serial();
-  
-#ifdef MONITOR
-  reset_hook ();
-#endif
+ }
 
-  in_nmi = 0;
-  dofault = 1;
-  stepped = 0;
 
-  stub_sp = stub_stack + stub_stack_size;
-  breakpoint();
-  
-  while (1)
-    ;
-}
 
-char highhex(int  x)
-{
-  return hexchars[(x >> 4) & 0xf];
-}
 
-char lowhex(int  x)
-{
-  return hexchars[x & 0xf];
-}
+ static void rr() __naked
+ {
+   __asm
+     ld    a, (#_registers + R_A) ;; restore AF
+     ld    b, a
+     ld    a, (#_registers + R_F)
+     ld    c, a
+     push  bc                              
+     pop   af
 
-/*
- * Assembly macros
- */
+     ld    hl, (#_registers + R_HL)
+     ld    bc, (#_registers + R_BC)      
+     ld    de, (#_registers + R_DE)          
+     ld    ix, (#_registers + R_IX)      
+     ld    iy, (#_registers + R_IY)          
 
 
-/*
- * Routines to handle hex data
- */
+     exx
+     ex    af, af'                         ;'
+     ld    hl, (#_registers + R_HLX)
+     ld    bc, (#_registers + R_BCX)      
+     ld    de, (#_registers + R_DEX)          
 
-static int
-hex (char ch)
-{
-  if ((ch >= 'a') && (ch <= 'f'))
-    return (ch - 'a' + 10);
-  if ((ch >= '0') && (ch <= '9'))
-    return (ch - '0');
-  if ((ch >= 'A') && (ch <= 'F'))
-    return (ch - 'A' + 10);
-  return (-1);
-}
+     ld    hl, (#_registers + R_AX)        ; restores *both* A and F (see register number constants )
+     push  hl
+     pop   af
 
-/* convert the memory, pointed to by mem into hex, placing result in buf */
-/* return a pointer to the last char put in buf (null) */
-static char *
-mem2hex (char *mem, char *buf, int count)
-{
-  int i;
-  int ch;
-  for (i = 0; i < count; i++)
-    {
-      ch = *mem++;
-      *buf++ = highhex (ch);
-      *buf++ = lowhex (ch);
-    }
-  *buf = 0;
-  return (buf);
-}
+     ;; switch back to original reg set
+     ex    af, af'                         ;'
+     exx             
 
-/* convert the hex array pointed to by buf into binary, to be placed in mem */
-/* return a pointer to the character after the last byte written */
-
-static char *
-hex2mem (char *buf, char *mem, int count)
-{
-  int i;
-  unsigned char ch;
-  for (i = 0; i < count; i++)
-    {
-      ch = hex (*buf++) << 4;
-      ch = ch + hex (*buf++);
-      *mem++ = ch;
-    }
-  return (mem);
-}
-
-/**********************************************/
-/* WHILE WE FIND NICE HEX CHARS, BUILD AN INT */
-/* RETURN NUMBER OF CHARS PROCESSED           */
-/**********************************************/
-static int
-hexToInt (char **ptr, int *intValue)
-{
-  int numChars = 0;
-  int hexValue;
-
-  *intValue = 0;
-
-  while (**ptr)
-    {
-      hexValue = hex (**ptr);
-      if (hexValue >= 0)
-        {
-          *intValue = (*intValue << 4) | hexValue;
-          numChars++;
-        }
-      else
-        break;
-
-      (*ptr)++;
-    }
-
-  return (numChars);
-}
-
-/*
- * Routines to get and put packets
- */
-
-/* scan for the sequence $<data>#<checksum>     */
-
-char *
-getpacket (void)
-{
-  unsigned char *buffer = &remcomInBuffer[0];
-  unsigned char checksum;
-  unsigned char xmitcsum;
-  int count;
-  char ch;
-
-  while (1)
-    {
-      /* wait around for the start character, ignore all other characters */
-      while ((ch = getDebugChar ()) != '$')
-        ;
-
-retry:
-      checksum = 0;
-      xmitcsum = -1;
-      count = 0;
-
-      /* now, read until a # or end of buffer is found */
-      while (count < BUFMAX - 1)
-        {
-          ch = getDebugChar ();
-          if (ch == '$')
-            goto retry;
-          if (ch == '#')
-            break;
-          checksum = checksum + ch;
-          buffer[count] = ch;
-          count = count + 1;
-        }
-      buffer[count] = 0;
-
-      if (ch == '#')
-        {
-          ch = getDebugChar ();
-          xmitcsum = hex (ch) << 4;
-          ch = getDebugChar ();
-          xmitcsum += hex (ch);
-
-          if (checksum != xmitcsum)
-            {
-              putDebugChar ('-');       /* failed checksum */
-            }
-          else
-            {
-              putDebugChar ('+');       /* successful transfer */
-
-              /* if a sequence char is present, reply the sequence ID */
-              if (buffer[2] == ':')
-                {
-                  putDebugChar (buffer[0]);
-                  putDebugChar (buffer[1]);
-
-                  return &buffer[3];
-                }
-
-              return &buffer[0];
-            }
-        }
-    }
-}
-
-
-/* send the packet in buffer. */
-
-static void
-putpacket (char *buffer)
-{
-  int checksum;
-
-  /*  $<packet info>#<checksum>. */
-  do
-    {
-      char *src = buffer;
-      putDebugChar ('$');
-      checksum = 0;
-
-      while (*src)
-        {
-          int runlen;
-
-          /* Do run length encoding */
-          for (runlen = 0; runlen < 100; runlen ++) 
-            {
-              if (src[0] != src[runlen]) 
-                {
-                  if (runlen > 3) 
-                    {
-                      int encode;
-                      /* Got a useful amount */
-                      putDebugChar (*src);
-                      checksum += *src;
-                      putDebugChar ('*');
-                      checksum += '*';
-                      checksum += (encode = runlen + ' ' - 4);
-                      putDebugChar (encode);
-                      src += runlen;
-                    }
-                  else
-                    {
-                      putDebugChar (*src);
-                      checksum += *src;
-                      src++;
-                    }
-                  break;
-                }
-            }
-        }
-
-
-      putDebugChar ('#');
-      putDebugChar (highhex(checksum));
-      putDebugChar (lowhex(checksum));
-    }
-  while  (getDebugChar() != '+');
-}
-
-
-/*
- * this function takes the SH-1 exception number and attempts to
- * translate this number into a unix compatible signal value
- */
-static int
-computeSignal (int exceptionVector)
-{
-  int sigval;
-  switch (exceptionVector)
-    {
-    case INVALID_INSN_VEC:
-      sigval = 4;
-      break;                    
-    case INVALID_SLOT_VEC:
-      sigval = 4;
-      break;                    
-    case CPU_BUS_ERROR_VEC:
-      sigval = 10;
-      break;                    
-    case DMA_BUS_ERROR_VEC:
-      sigval = 10;
-      break;    
-    case NMI_VEC:
-      sigval = 2;
-      break;    
-
-    case TRAP_VEC:
-    case USER_VEC:
-    case Z80_RST08_VEC:
-      sigval = 5;
-      break;
-
-    default:
-      sigval = 7;               /* "software generated"*/
-      break;
-    }
-  return (sigval);
-}
-
-void
-doSStep (void)
-{
-  char *instrMem;
-///LLL   int displacement;
-///LLL   int reg;
-  unsigned short opcode;
-
-  //instrMem = (short *) registers[PC];
-  instrMem = (char *) registers.pc;
-
-  opcode = *instrMem;
-  stepped = 1;
-
-/// LLL   if ((opcode & COND_BR_MASK) == BT_INSTR)
-/// LLL     {
-/// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
-/// LLL         {
-/// LLL           displacement = (opcode & COND_DISP) << 1;
-/// LLL           if (displacement & 0x80)
-/// LLL             displacement |= 0xffffff00;
-/// LLL           /*
-/// LLL                    * Remember PC points to second instr.
-/// LLL                    * after PC of branch ... so add 4
-/// LLL                    */
-/// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
-/// LLL         }
-/// LLL       else
-/// LLL         instrMem += 1;
-/// LLL     }
-/// LLL   else if ((opcode & COND_BR_MASK) == BF_INSTR)
-/// LLL     {
-/// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
-/// LLL         instrMem += 1;
-/// LLL       else
-/// LLL         {
-/// LLL           displacement = (opcode & COND_DISP) << 1;
-/// LLL           if (displacement & 0x80)
-/// LLL             displacement |= 0xffffff00;
-/// LLL           /*
-/// LLL                    * Remember PC points to second instr.
-/// LLL                    * after PC of branch ... so add 4
-/// LLL                    */
-/// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
-/// LLL         }
-/// LLL     }
-/// LLL   else if ((opcode & UCOND_DBR_MASK) == BRA_INSTR)
-/// LLL     {
-/// LLL       displacement = (opcode & UCOND_DISP) << 1;
-/// LLL       if (displacement & 0x0800)
-/// LLL         displacement |= 0xfffff000;
-/// LLL 
-/// LLL       /*
-/// LLL            * Remember PC points to second instr.
-/// LLL            * after PC of branch ... so add 4
-/// LLL            */
-/// LLL       instrMem = (short *) (registers[PC] + displacement + 4);
-/// LLL     }
-/// LLL   else if ((opcode & UCOND_RBR_MASK) == JSR_INSTR)
-/// LLL     {
-/// LLL       reg = (char) ((opcode & UCOND_REG) >> 8);
-/// LLL 
-/// LLL       instrMem = (short *) registers[reg];
-/// LLL     }
-/// LLL   else if (opcode == RTS_INSTR)
-/// LLL     ; // instrMem = (short *) registers[PR];
-/// LLL   else if (opcode == RTE_INSTR)
-/// LLL     instrMem = (short *) registers[15];
-/// LLL   else if ((opcode & TRAPA_MASK) == TRAPA_INSTR)
-/// LLL     instrMem = (short *) ((opcode & ~TRAPA_MASK) << 2);
-/// LLL   else
-/// LLL     instrMem += 1;
-  instrMem += 1;
-  
-  instrBuffer.memAddr = instrMem;
-  instrBuffer.oldInstr = *instrMem;
-  *instrMem = SSTEP_INSTR;
-}
-
-
-/* Undo the effect of a previous doSStep.  If we single stepped,
-   restore the old instruction. */
-
-void
-undoSStep (void)
-{
-/// LLL   if (stepped)
-/// LLL     {  short *instrMem;
-/// LLL       instrMem = instrBuffer.memAddr;
-/// LLL       *instrMem = instrBuffer.oldInstr;
-/// LLL     }
-  if (stepped)
-    { char *instrMem;
-      instrMem = instrBuffer.memAddr;
-      *instrMem = instrBuffer.oldInstr;
-    }
-  stepped = 0;
-}
-
-/*
-This function does all exception handling.  It only does two things -
-it figures out why it was called and tells gdb, and then it reacts
-to gdb's requests.
-
-When in the monitor mode we talk a human on the serial line rather than gdb.
-
-*/
-void
-gdb_handle_exception (int exceptionVector)
-{
-  int sigval, stepping;
-  int addr, length;
-  char *ptr;
-
-  /* reply to host that an exception has occurred */
-  sigval = computeSignal (exceptionVector);
-  remcomOutBuffer[0] = 'S';
-  remcomOutBuffer[1] = highhex(sigval);
-  remcomOutBuffer[2] = lowhex (sigval);
-  remcomOutBuffer[3] = 0;
-
-  putpacket (remcomOutBuffer);
-
-  /*
-   * Exception 0x08 means a RST 08 instruction (breakpoint) inserted in
-   * place of code
-   * 
-   * Backup PC by one instruction, this instruction will later
-   * be replaced by the original instruction at the breakpoint
-   */
-  if (exceptionVector == 0x08)
-    registers.pc -= 1;
-    // registers[R_PC] -= 1;
-
-  /*
-   * Do the thangs needed to undo
-   * any stepping we may have done!
-   */
-  undoSStep ();
-
-  stepping = 0;
-
-  while (1)
-    {
-      remcomOutBuffer[0] = 0;
-      ptr = getpacket ();
-
-      switch (*ptr++)
-        {
-        case '?':
-          remcomOutBuffer[0] = 'S';
-          remcomOutBuffer[1] = highhex (sigval);
-          remcomOutBuffer[2] = lowhex (sigval);
-          remcomOutBuffer[3] = 0;
-          break;
-        case 'd':
-          remote_debug = !(remote_debug);       /* toggle debug flag */
-          break;
-        case 'g':               /* return the value of the CPU registers */
-          mem2hex ((char *) registers, remcomOutBuffer, NUMREGBYTES);
-          break;
-        case 'G':               /* set the value of the CPU registers - return OK */
-          hex2mem (ptr, (char *) registers, NUMREGBYTES);
-          strcpy (remcomOutBuffer, "OK");
-          break;
-
-          /* mAA..AA,LLLL  Read LLLL bytes at address AA..AA */
-        case 'm':
-          dofault = 0;
-          /* TRY, TO READ %x,%x.  IF SUCCEED, SET PTR = 0 */
-          if (hexToInt (&ptr, &addr))
-            if (*(ptr++) == ',')
-              if (hexToInt (&ptr, &length))
-                {
-                  ptr = 0;
-                  mem2hex ((char *) addr, remcomOutBuffer, length);
-                }
-          if (ptr)
-            strcpy (remcomOutBuffer, "E01");
-          
-          break;
-
-          /* MAA..AA,LLLL: Write LLLL bytes at address AA.AA return OK */
-        case 'M':
-          /* TRY, TO READ '%x,%x:'.  IF SUCCEED, SET PTR = 0 */
-          if (hexToInt (&ptr, &addr))
-            if (*(ptr++) == ',')
-              if (hexToInt (&ptr, &length))
-                if (*(ptr++) == ':')
-                  {
-                    hex2mem (ptr, (char *) addr, length);
-                    ptr = 0;
-                    strcpy (remcomOutBuffer, "OK");
-                  }
-          if (ptr)
-            strcpy (remcomOutBuffer, "E02");
-
-          break;
-
-          /* cAA..AA    Continue at address AA..AA(optional) */
-          /* sAA..AA   Step one instruction from AA..AA(optional) */
-        case 's':
-          stepping = 1;
-        case 'c':
-          {
-            /* tRY, to read optional parameter, pc unchanged if no parm */
-            if (hexToInt (&ptr, &addr))
-              registers.pc = addr;
-              //registers[R_PC] = addr;
-            if (stepping)
-              doSStep ();
-          }
-          return;
-          break;
-
-          /* kill the program */
-        case 'k':               /* do nothing */
-          break;
-        }                       /* switch */
-
-      /* reply to the request */
-      putpacket (remcomOutBuffer);
-    }
-}
-
-
-#define GDBCOOKIE 0x5ac 
-static int ingdbmode;
-void handle_exception(int exceptionVector)
-{
-  gdb_handle_exception (exceptionVector);
-}
-
-void
-gdb_mode (void)
-{
-  ingdbmode = GDBCOOKIE;
-  breakpoint();
-}
-/* This function will generate a breakpoint exception.  It is used at the
-   beginning of a program to sync up with a debugger and can be used
-   otherwise as a quick means to stop program execution and "break" into
-   the debugger. */
-void
-breakpoint (void) __naked
-{
-  __asm              
-  nop                
-  nop                
-  nop                
-  RST 08             
-  nop                
-  nop                
-  jp  0xb000        
-  nop                
-  nop                
-  __endasm;          
-}
-
-
-static void sr() __naked
-{
-//          /* Calling Reset does the same as pressing the button */
-//          asm (".global _Reset
-//                .global _WarmReset
-//        _Reset:
-//        _WarmReset:
-//                 mov.l L_sp,r15
-//                 bra   _INIT
-//                 nop
-//                 .align 2
-//        L_sp:    .long _init_stack + 8000");
-
-  /* saveRegisters routine */
- saveRegisters:
-  __asm
-    ld    (#_intcause), hl        ;; argument passed in hl signals the exception cause
-    pop   hl                      ;; recover original hl before hitting the breakpoint
-
-    ld    (#_registers + R_HL), hl
-    push  af                      ;; dirty trick to save AF
-    pop   hl
-    ld    a,h
-    ld    (#_registers + R_A), a   
-    ld    a,l
-    ld    (#_registers + R_F), a    
-                                   
-    ld    (#_registers + R_BC), bc
-    ld    (#_registers + R_DE), de
-    ld    (#_registers + R_IX), ix
-    ld    (#_registers + R_IY), iy
-
-    ;; alternate register set
-    exx
-    ex   af,af'                     ;;'
-
-    ld    (#_registers + R_HLX), hl
-
-    push  af ;; dirty trick to save AF
-    pop   hl
-    ld    (#_registers + R_AX),  hl  ;; saves both A and F (because R_FX == R_AX+1)
-    ld    (#_registers + R_BCX), bc
-    ld    (#_registers + R_DEX), de
-
-    ;; switch back to original reg set
-    ex   af,af'                     ;;'
-    exx
-
-    pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
-    ld   (#_registers + R_PC), hl
-    push hl
-
-    ld    hl, (#_intcause)
-    push  hl
-    call  _handle_exception              
-    pop   af      
-
-  __endasm;
-
-}
-
-
-
-
-static void rr() __naked
-{
-  __asm
-    ld    a, (#_registers + R_A) ;; restore AF
-    ld    b, a
-    ld    a, (#_registers + R_F)
-    ld    c, a
-    push  bc                              
-    pop   af
-
-    ld    hl, (#_registers + R_HL)
-    ld    bc, (#_registers + R_BC)      
-    ld    de, (#_registers + R_DE)          
-    ld    ix, (#_registers + R_IX)      
-    ld    iy, (#_registers + R_IY)          
-
-
-    exx
-    ex    af, af'                         ;'
-    ld    hl, (#_registers + R_HLX)
-    ld    bc, (#_registers + R_BCX)      
-    ld    de, (#_registers + R_DEX)          
-
-    ld    hl, (#_registers + R_AX)        ; restores *both* A and F (see register number constants )
-    push  hl
-    pop   af
-
-    ;; switch back to original reg set
-    ex    af, af'                         ;'
-    exx             
-
-    ;; put the (new?) PC back in the stack as the return address
-    ld    hl, (#_registers + R_PC)
-    ex    (sp), hl
-    ld    hl, (#_registers + R_HL)
+     ;; put the (new?) PC back in the stack as the return address
+     ld    hl, (#_registers + R_PC)
+     ex    (sp), hl
+         ld    hl, (#_registers + R_HL)
 
   __endasm;
 }
@@ -1135,11 +1211,6 @@ static void rr() __naked
 
 void handleError (char theSSR);
 
-void
-nop (void)
-{
-
-}
 void 
 init_serial (void)
 {
@@ -1158,7 +1229,7 @@ init_serial (void)
   /* let the hardware settle */
 
   for (i = 0; i < 1000; i++)
-    nop ();
+    ;
 
   /* Turn on in and out */
   SCR1 |= SCI_RE | SCI_TE;
@@ -1257,18 +1328,289 @@ handleError (char theSSR)
   // SSR1 &= ~(SCI_ORER | SCI_PER | SCI_FER);
 }
 
-/* pacify the compiler */
-void main ()
+
+
+
+
+// --------------------
+
+static int
+prt (struct buffer *buf, char * info, char *txt)
 {
-  int a;
-  int i = 0;
-
-  for (i=0; i<255; i++)
-    {
-      a = i % 2;
-    }
-
+//   info->fprintf_func (info->stream, "%s", txt);
+//   buf->n_used = buf->n_fetch;
+  return 1;
 }
+
+static int
+prt_e (struct buffer *buf, char * info, char *txt)
+{
+//   char e;
+//   int target_addr;
+// 
+//   if (fetch_data (buf, info, 1))
+//     {
+//       e = buf->data[1];
+//       target_addr = (buf->base + 2 + e) & 0xffff;
+//       buf->n_used = buf->n_fetch;
+//       info->fprintf_func (info->stream, "%s0x%04x", txt, target_addr);
+//     }
+//   else
+//     buf->n_used = -1;
+
+  return buf->n_used;
+}
+
+static int
+jr_cc (struct buffer *buf, char * info, char *txt)
+{
+  char mytxt[TXTSIZ];
+// 
+//   snprintf (mytxt, TXTSIZ, txt, cc_str[(buf->data[0] >> 3) & 3]);
+  return prt_e (buf, info, mytxt);
+}
+
+static int
+prt_nn (struct buffer *buf, char * info, char *txt)
+{
+//   int nn;
+//   unsigned char *p;
+// 
+//   p = (unsigned char*) buf->data + buf->n_fetch;
+//   if (fetch_data (buf, info, 2))
+//     {
+//       nn = p[0] + (p[1] << 8);
+//       info->fprintf_func (info->stream, txt, nn);
+//       buf->n_used = buf->n_fetch;
+//     }
+//   else
+//     buf->n_used = -1;
+  return buf->n_used;
+}
+
+static int
+prt_rr_nn (struct buffer *buf, char * info, char *txt)
+{
+   char mytxt[TXTSIZ];
+//   int rr;
+// 
+//   rr = (buf->data[buf->n_fetch - 1] >> 4) & 3; 
+//   snprintf (mytxt, TXTSIZ, txt, rr_str[rr]);
+  return prt_nn (buf, info, mytxt);
+}
+
+static int
+prt_rr (struct buffer *buf, char * info, char *txt)
+{
+//   info->fprintf_func (info->stream, "%s%s", txt,
+// 		      rr_str[(buf->data[buf->n_fetch - 1] >> 4) & 3]);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+static int
+prt_n (struct buffer *buf, char * info, char *txt)
+{
+//   int n;
+//   unsigned char *p;
+// 
+//   p = (unsigned char*) buf->data + buf->n_fetch;
+// 
+//   if (fetch_data (buf, info, 1))
+//     {
+//       n = p[0];
+//       info->fprintf_func (info->stream, txt, n);
+//       buf->n_used = buf->n_fetch;
+//     }
+//   else
+//     buf->n_used = -1;
+
+  return buf->n_used;
+}
+
+static int
+ld_r_n (struct buffer *buf, char * info, char *txt)
+{
+   char mytxt[TXTSIZ];
+// 
+//   snprintf (mytxt, TXTSIZ, txt, r_str[(buf->data[0] >> 3) & 7]);
+  return prt_n (buf, info, mytxt);
+}
+
+static int
+prt_r (struct buffer *buf, char * info, char *txt)
+{
+//   info->fprintf_func (info->stream, txt,
+// 		      r_str[(buf->data[buf->n_fetch - 1] >> 3) & 7]);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+static int
+ld_r_r (struct buffer *buf, char * info, char *txt)
+{
+//   info->fprintf_func (info->stream, txt,
+// 		      r_str[(buf->data[buf->n_fetch - 1] >> 3) & 7],
+// 		      r_str[buf->data[buf->n_fetch - 1] & 7]);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+static int
+arit_r (struct buffer *buf, char * info, char *txt)
+{
+//   info->fprintf_func (info->stream, txt,
+// 		      arit_str[(buf->data[buf->n_fetch - 1] >> 3) & 7],
+// 		      r_str[buf->data[buf->n_fetch - 1] & 7]);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+static int
+prt_cc (struct buffer *buf, char * info, char *txt)
+{
+//   info->fprintf_func (info->stream, "%s%s", txt,
+// 		      cc_str[(buf->data[0] >> 3) & 7]);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+static int
+pop_rr (struct buffer *buf, char * info, char *txt)
+{
+//   static char *rr_stack[] = { "bc","de","hl","af"};
+// 
+//   info->fprintf_func (info->stream, "%s %s", txt,
+// 		      rr_stack[(buf->data[0] >> 4) & 3]);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+
+static int
+jp_cc_nn (struct buffer *buf, char * info, char *txt)
+{
+  char mytxt[TXTSIZ];
+// 
+//   snprintf (mytxt,TXTSIZ,
+// 	    "%s%s,0x%%04x", txt, cc_str[(buf->data[0] >> 3) & 7]);
+  return prt_nn (buf, info, mytxt);
+}
+
+static int
+arit_n (struct buffer *buf, char * info, char *txt)
+{
+  char mytxt[TXTSIZ];
+// 
+//   snprintf (mytxt,TXTSIZ, txt, arit_str[(buf->data[0] >> 3) & 7]);
+  return prt_n (buf, info, mytxt);
+}
+
+static int
+rst (struct buffer *buf, char * info, char *txt)
+{
+//   info->fprintf_func (info->stream, txt, buf->data[0] & 0x38);
+//   buf->n_used = buf->n_fetch;
+  return buf->n_used;
+}
+
+static int
+pref_cb (struct buffer * buf, char * info,
+	 char* txt)
+{
+//   if (fetch_data (buf, info, 1))
+//     {
+//       buf->n_used = 2;
+//       if ((buf->data[1] & 0xc0) == 0)
+// 	info->fprintf_func (info->stream, "%s %s",
+// 			    cb2_str[(buf->data[1] >> 3) & 7],
+// 			    r_str[buf->data[1] & 7]);
+//       else
+// 	info->fprintf_func (info->stream, "%s %d,%s",
+// 			    cb1_str[(buf->data[1] >> 6) & 3],
+// 			    (buf->data[1] >> 3) & 7,
+// 			    r_str[buf->data[1] & 7]);
+//     }
+//   else
+//     buf->n_used = -1;
+
+  return buf->n_used;
+}
+
+static int
+pref_ind (struct buffer * buf, char * info, char* txt)
+{
+//   if (fetch_data (buf, info, 1))
+//     {
+//       char mytxt[TXTSIZ];
+//       struct tab_elt *p;
+// 
+//       for (p = opc_ind; p->val != (buf->data[1] & p->mask); ++p)
+// 	;
+//       snprintf (mytxt, TXTSIZ, p->text, txt);
+//       p->fp (buf, info, mytxt);
+//     }
+//   else
+//     buf->n_used = -1;
+
+  return buf->n_used;
+}
+
+static int
+pref_xd_cb (struct buffer * buf, char * info, char* txt)
+{
+//   if (fetch_data (buf, info, 2))
+//     {
+//       int d;
+//       char arg[TXTSIZ];
+//       signed char *p;
+// 
+//       buf->n_used = 4;
+//       p = buf->data;
+//       d = p[2];
+// 
+//       if (((p[3] & 0xC0) == 0x40) || ((p[3] & 7) == 0x06))
+// 	snprintf (arg, TXTSIZ, "(%s%+d)", txt, d);
+//       else
+// 	snprintf (arg, TXTSIZ, "(%s%+d),%s", txt, d, r_str[p[3] & 7]);
+// 
+//       if ((p[3] & 0xc0) == 0)
+// 	info->fprintf_func (info->stream, "%s %s",
+// 			    cb2_str[(buf->data[3] >> 3) & 7],
+// 			    arg);
+//       else
+// 	info->fprintf_func (info->stream, "%s %d,%s",
+// 			    cb1_str[(buf->data[3] >> 6) & 3],
+// 			    (buf->data[3] >> 3) & 7,
+// 			    arg);
+//     }
+//   else
+//     buf->n_used = -1;
+
+  return buf->n_used;
+}
+
+static int
+pref_ed (struct buffer * buf, char * info, 
+	 char* txt)
+{
+//  struct tab_elt *p;
+//
+//  if (fetch_data(buf, info, 1))
+//    {
+//      for (p = opc_ed; p->val != (buf->data[1] & p->mask); ++p)
+//	;
+//      p->fp (buf, info, p->text);
+//    }
+//  else
+//    buf->n_used = -1;
+
+  return buf->n_used;
+}
+// -------------------- 
+
+/* pacify the compiler */
+void main () {}
 
 /* Local Variables: */
 /* compile-command: "./compile_z80stub.sh" */
