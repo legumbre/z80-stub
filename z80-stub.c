@@ -1700,9 +1700,12 @@ void *
 pe_jp_cc_nn (void *pc, struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
-  char  opcode = *cpc;
-  char  condition = (opcode & ~(inst->mask)) >> 3;
-  short nn = cpc[1]; // immediate nn for the jp
+  short e = 0;
+
+  char opcode = *cpc;
+  char condition_mask = ~(inst->mask);
+  unsigned char condition = (opcode & condition_mask);
+  condition = (condition >> 3) & 0x07;
 
   if (cc_holds(condition))
     {
@@ -1787,7 +1790,7 @@ pe_jr_cc (void *pc, struct tab_elt *inst)
   char opcode = *cpc;
   char condition_mask = ~(inst->mask);
   unsigned char condition = (opcode & condition_mask);
-  condition = condition >> 3;
+  condition = (condition >> 3) & 0x07;
 
   if (cc_holds(condition))
     {
@@ -1809,8 +1812,10 @@ void *
 pe_ret_cc (void *pc, struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
-  char  opcode = *cpc;
-  char  condition = (opcode & ~(inst->mask)) >> 3;
+  char opcode = *cpc;
+  char condition_mask = ~(inst->mask);
+  unsigned char condition = (opcode & condition_mask);
+  condition = (condition >> 3) & 0x07;
   
   if (cc_holds(condition))
     {
