@@ -1753,25 +1753,25 @@ char cc_holds(char cond)
   switch (cond)
     {
     case cond_NZ:
-      holds = ~(flags & ZERO_FLAG_MASK);
+      holds = !(flags & ZERO_FLAG_MASK);
       break;
     case cond_Z:
       holds =  (flags & ZERO_FLAG_MASK);
       break;
     case cond_NC:
-      holds = ~(flags & CARRY_FLAG_MASK);
+      holds = !(flags & CARRY_FLAG_MASK);
       break;
     case cond_C:
       holds =  (flags & CARRY_FLAG_MASK);
       break;
     case cond_PO:
-      holds = ~(flags & PARITY_FLAG_MASK);
+      holds = !(flags & PARITY_FLAG_MASK);
       break;
     case cond_PE:
       holds =  (flags & PARITY_FLAG_MASK);
       break;
     case cond_P:
-      holds = ~(flags & SIGN_FLAG_MASK);
+      holds = !(flags & SIGN_FLAG_MASK);
       break;
     case cond_M:
       holds =  (flags & SIGN_FLAG_MASK);
