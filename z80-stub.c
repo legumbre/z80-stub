@@ -227,7 +227,6 @@
 /*
  * Forward declarations
  */
-
 static int hex (char);
 static char *mem2hex (char *, char *, int);
 static char *hex2mem (char *, char *, int);
@@ -241,14 +240,15 @@ void init_serial();
 void putDebugChar (char);
 char getDebugChar (void);
 
+char cc_holds(char cond);
 
 #define catch_exception_random catch_exception_255 /* Treat all odd ones like 255 */
 
 void breakpoint() __naked;
 
 
-#define init_stack_size 512  /* if you change this you should also modify BINIT */
-#define stub_stack_size 512
+#define init_stack_size 1024  /* if you change this you should also modify BINIT */
+#define stub_stack_size 1024
 
 int init_stack[init_stack_size];//  __attribute__ ((section ("stack"))) = {0};
 int stub_stack[stub_stack_size];//  __attribute__ ((section ("stack"))) = {0};
@@ -301,7 +301,6 @@ volatile struct {
 typedef struct
   {
     char *memAddr;
-    // LLL short oldInstr;
     char oldInstr;
   }
 stepData;
@@ -330,71 +329,100 @@ struct tab_elt
   unsigned char inst_len;
 } ;
 
-// typedef void* (*NextPCFunc) (void *pc, tab_elt *inst);
+/* PSEUDO EVAL FUNCTIONS */
+static void *prt (void *pc, struct tab_elt *inst);
+static void *prt_e (void *pc, struct tab_elt *inst);
+static void *jr_cc (void *pc, struct tab_elt *inst);
+static void *prt_nn (void *pc, struct tab_elt *inst);
+static void *prt_rr_nn (void *pc, struct tab_elt *inst);
+static void *prt_rr (void *pc, struct tab_elt *inst);
+static void *prt_n  (void *pc, struct tab_elt *inst);
+void *ld_r_n  (void *pc, struct tab_elt *inst);
+void *prt_r (void *pc, struct tab_elt *inst);
+void *ld_r_r (void *pc, struct tab_elt *inst);
+void *arit_r (void *pc, struct tab_elt *inst);
+void *prt_cc (void *pc, struct tab_elt *inst);
+void *pop_rr (void *pc, struct tab_elt *inst);
+void *jp_cc_nn (void *pc, struct tab_elt *inst);
+void *arit_n (void *pc, struct tab_elt *inst);
+void *rst (void *pc, struct tab_elt *inst);
+static void *pref_cb (void *pc, struct tab_elt *inst);
+static void *pref_ind (void *pc, struct tab_elt *inst);
+static void *pref_xd_cb (void *pc, struct tab_elt *inst);
+static void *pref_ed (void *pc, struct tab_elt *inst);
+void *pe_djnz (void *pc, struct tab_elt *inst);
+void *pe_jp_nn (void *pc, struct tab_elt *inst);
+void *pe_jp_cc_nn (void *pc, struct tab_elt *inst);
+void *pe_jr (void *pc, struct tab_elt *inst);
+void *pe_jr_cc (void *pc, struct tab_elt *inst);
+void *pe_ret (void *pc, struct tab_elt *inst);
+void *pe_ret_cc (void *pc, struct tab_elt *inst);
 
- #define TXTSIZ 24
+/* end of pseudo eval functions */
+
+#define TXTSIZ 24
 
 /* Table to disassemble machine codes without prefix.  */
 static struct tab_elt opc_main[] =
 {
-  { 0x00, 0xFF, prt       , "nop",            1 },
-  { 0x01, 0xCF, prt_rr_nn , "ld %s,0x%%04x",  3 },
-  { 0x02, 0xFF, prt       , "ld (bc),a",      1 },
-  { 0x03, 0xCF, prt_rr    , "inc " ,          1 },
-  { 0x04, 0xC7, prt_r     , "inc %s",         1 },
-  { 0x05, 0xC7, prt_r     , "dec %s",         1 },
-  { 0x06, 0xC7, ld_r_n    , "ld %s,0x%%02x",  2 },
-  { 0x07, 0xFF, prt       , "rlca",           1 },
-  { 0x08, 0xFF, prt       , "ex af,af'",      1 },
-  { 0x09, 0xCF, prt_rr    , "add hl,",        1 },
-  { 0x0A, 0xFF, prt       , "ld a,(bc)" ,     1 },
-  { 0x0B, 0xCF, prt_rr    , "dec ",           1 },
-  { 0x0F, 0xFF, prt       , "rrca",           1 },
-  { 0x10, 0xFF, pe_djnz   , "djnz ",          2 },
-  { 0x12, 0xFF, prt       , "ld (de),a",      1 },
-  { 0x17, 0xFF, prt       , "rla",            1 },
-  { 0x18, 0xFF, pe_jr     , "jr ",            2 },
-  { 0x1A, 0xFF, prt       , "ld a,(de)",      1 },
-  { 0x1F, 0xFF, prt       , "rra",            1 },
-  { 0x20, 0xE7, pe_jr_cc  , "jr %s,",         2 },
-  { 0x22, 0xFF, prt_nn    , "ld (0x%04x),hl", 3 },
-  { 0x27, 0xFF, prt       , "daa",            1 },
-  { 0x2A, 0xFF, prt_nn    , "ld hl,(0x%04x)", 3 },
-  { 0x2F, 0xFF, prt       , "cpl",            1 },
-  { 0x32, 0xFF, prt_nn    , "ld (0x%04x),a",  3 },
-  { 0x37, 0xFF, prt       , "scf",            1 },
-  { 0x3A, 0xFF, prt_nn    , "ld a,(0x%04x)",  3 },
-  { 0x3F, 0xFF, prt       , "ccf",            1 },
-
-  { 0x76, 0xFF, prt       , "halt",           1 },
-  { 0x40, 0xC0, ld_r_r    , "ld %s,%s",       1 },
-
-  { 0x80, 0xC0, arit_r    , "%s%s",           1 },
-
-  { 0xC0, 0xC7, prt_cc    , "ret ",           1 },
-  { 0xC1, 0xCF, pop_rr    , "pop",            1 },
-  { 0xC2, 0xC7, jp_cc_nn  , "jp ",            3 },
-  { 0xC3, 0xFF, pe_jp_nn  , "jp 0x%04x",      3 },
-  { 0xC4, 0xC7, jp_cc_nn  , "call ",          3 },
-  { 0xC5, 0xCF, pop_rr    , "push",           1 }, 
-  { 0xC6, 0xC7, arit_n    , "%s0x%%02x",      2 },
-  { 0xC7, 0xC7, rst       , "rst 0x%02x",     1 },
-  { 0xC9, 0xFF, pe_ret    , "ret",            1 },
-  { 0xCB, 0xFF, pref_cb   , "",               0 },
-  { 0xCD, 0xFF, pe_jp_nn  , "call 0x%04x",    3 },
-  { 0xD3, 0xFF, prt_n     , "out (0x%02x),a", 2 },
-  { 0xD9, 0xFF, prt       , "exx",            1 },
-  { 0xDB, 0xFF, prt_n     , "in a,(0x%02x)",  2 },
-  { 0xDD, 0xFF, pref_ind  , "ix",             0 },
-  { 0xE3, 0xFF, prt       , "ex (sp),hl",     1 },
-  { 0xE9, 0xFF, prt       , "jp (hl)",        1 },
-  { 0xEB, 0xFF, prt       , "ex de,hl",       1 },
-  { 0xED, 0xFF, pref_ed   , "",               0 },
-  { 0xF3, 0xFF, prt       , "di",             1 },
-  { 0xF9, 0xFF, prt       , "ld sp,hl",       1 },
-  { 0xFB, 0xFF, prt       , "ei",             1 },
-  { 0xFD, 0xFF, pref_ind  , "iy",             0 },
-  { 0x00, 0x00, prt       , "????"          , 1 },
+  { 0x00, 0xFF, prt         , "nop",            1 },
+  { 0x01, 0xCF, prt_rr_nn   , "ld %s,0x%%04x",  3 },
+  { 0x02, 0xFF, prt         , "ld (bc),a",      1 },
+  { 0x03, 0xCF, prt_rr      , "inc " ,          1 },
+  { 0x04, 0xC7, prt_r       , "inc %s",         1 },
+  { 0x05, 0xC7, prt_r       , "dec %s",         1 },
+  { 0x06, 0xC7, ld_r_n      , "ld %s,0x%%02x",  2 },
+  { 0x07, 0xFF, prt         , "rlca",           1 },
+  { 0x08, 0xFF, prt         , "ex af,af'",      1 },
+  { 0x09, 0xCF, prt_rr      , "add hl,",        1 },
+  { 0x0A, 0xFF, prt         , "ld a,(bc)" ,     1 },
+  { 0x0B, 0xCF, prt_rr      , "dec ",           1 },
+  { 0x0F, 0xFF, prt         , "rrca",           1 },
+  { 0x10, 0xFF, pe_djnz     , "djnz ",          2 },
+  { 0x12, 0xFF, prt         , "ld (de),a",      1 },
+  { 0x17, 0xFF, prt         , "rla",            1 },
+  { 0x18, 0xFF, pe_jr       , "jr ",            2 },
+  { 0x1A, 0xFF, prt         , "ld a,(de)",      1 },
+  { 0x1F, 0xFF, prt         , "rra",            1 },
+  { 0x20, 0xE7, pe_jr_cc    , "jr %s,",         2 },
+  { 0x22, 0xFF, prt_nn      , "ld (0x%04x),hl", 3 },
+  { 0x27, 0xFF, prt         , "daa",            1 },
+  { 0x2A, 0xFF, prt_nn      , "ld hl,(0x%04x)", 3 },
+  { 0x2F, 0xFF, prt         , "cpl",            1 },
+  { 0x32, 0xFF, prt_nn      , "ld (0x%04x),a",  3 },
+  { 0x37, 0xFF, prt         , "scf",            1 },
+  { 0x3A, 0xFF, prt_nn      , "ld a,(0x%04x)",  3 },
+  { 0x3F, 0xFF, prt         , "ccf",            1 },
+                            
+  { 0x76, 0xFF, prt         , "halt",           1 },
+  { 0x40, 0xC0, ld_r_r      , "ld %s,%s",       1 },
+                            
+  { 0x80, 0xC0, arit_r      , "%s%s",           1 },
+                            
+  { 0xC0, 0xC7, pe_ret_cc   , "ret ",           1 },
+  { 0xC1, 0xCF, pop_rr      , "pop",            1 },
+  { 0xC2, 0xC7, pe_jp_cc_nn , "jp ",            3 },
+  { 0xC3, 0xFF, pe_jp_nn    , "jp 0x%04x",      3 },
+  { 0xC4, 0xC7, pe_jp_cc_nn , "call ",          3 },
+  { 0xC5, 0xCF, pop_rr      , "push",           1 }, 
+  { 0xC6, 0xC7, arit_n      , "%s0x%%02x",      2 },
+  { 0xC7, 0xC7, rst         , "rst 0x%02x",     1 },
+  { 0xC9, 0xFF, pe_ret      , "ret",            1 },
+  { 0xCB, 0xFF, pref_cb     , "",               0 },
+  { 0xCD, 0xFF, pe_jp_nn    , "call 0x%04x",    3 },
+  { 0xD3, 0xFF, prt_n       , "out (0x%02x),a", 2 },
+  { 0xD9, 0xFF, prt         , "exx",            1 },
+  { 0xDB, 0xFF, prt_n       , "in a,(0x%02x)",  2 },
+  { 0xDD, 0xFF, pref_ind    , "ix",             0 },
+  { 0xE3, 0xFF, prt         , "ex (sp),hl",     1 },
+  { 0xE9, 0xFF, prt         , "jp (hl)",        1 },
+  { 0xEB, 0xFF, prt         , "ex de,hl",       1 },
+  { 0xED, 0xFF, pref_ed     , "",               0 },
+  { 0xF3, 0xFF, prt         , "di",             1 },
+  { 0xF9, 0xFF, prt         , "ld sp,hl",       1 },
+  { 0xFB, 0xFF, prt         , "ei",             1 },
+  { 0xFD, 0xFF, pref_ind    , "iy",             0 },
+  { 0x00, 0x00, prt         , "????"          , 1 },
 } ;
 
 /*
@@ -780,68 +808,7 @@ struct tab_elt opc_main[] =
 
    nextInstrMem = (char *) p->fp(instrMem, p);
 
-
- /// LLL   if ((opcode & COND_BR_MASK) == BT_INSTR)
- /// LLL     {
- /// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
- /// LLL         {
- /// LLL           displacement = (opcode & COND_DISP) << 1;
- /// LLL           if (displacement & 0x80)
- /// LLL             displacement |= 0xffffff00;
- /// LLL           /*
- /// LLL                    * Remember PC points to second instr.
- /// LLL                    * after PC of branch ... so add 4
- /// LLL                    */
- /// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
- /// LLL         }
- /// LLL       else
- /// LLL         instrMem += 1;
- /// LLL     }
- /// LLL   else if ((opcode & COND_BR_MASK) == BF_INSTR)
- /// LLL     {
- /// LLL       if (1) // if (registers[SR] & T_BIT_MASK)
- /// LLL         instrMem += 1;
- /// LLL       else
- /// LLL         {
- /// LLL           displacement = (opcode & COND_DISP) << 1;
- /// LLL           if (displacement & 0x80)
- /// LLL             displacement |= 0xffffff00;
- /// LLL           /*
- /// LLL                    * Remember PC points to second instr.
- /// LLL                    * after PC of branch ... so add 4
- /// LLL                    */
- /// LLL           instrMem = (short *) (registers[PC] + displacement + 4);
- /// LLL         }
- /// LLL     }
- /// LLL   else if ((opcode & UCOND_DBR_MASK) == BRA_INSTR)
- /// LLL     {
- /// LLL       displacement = (opcode & UCOND_DISP) << 1;
- /// LLL       if (displacement & 0x0800)
- /// LLL         displacement |= 0xfffff000;
- /// LLL 
- /// LLL       /*
- /// LLL            * Remember PC points to second instr.
- /// LLL            * after PC of branch ... so add 4
- /// LLL            */
- /// LLL       instrMem = (short *) (registers[PC] + displacement + 4);
- /// LLL     }
- /// LLL   else if ((opcode & UCOND_RBR_MASK) == JSR_INSTR)
- /// LLL     {
- /// LLL       reg = (char) ((opcode & UCOND_REG) >> 8);
- /// LLL 
- /// LLL       instrMem = (short *) registers[reg];
- /// LLL     }
- /// LLL   else if (opcode == RTS_INSTR)
- /// LLL     ; // instrMem = (short *) registers[PR];
- /// LLL   else if (opcode == RTE_INSTR)
- /// LLL     instrMem = (short *) registers[15];
- /// LLL   else if ((opcode & TRAPA_MASK) == TRAPA_INSTR)
- /// LLL     instrMem = (short *) ((opcode & ~TRAPA_MASK) << 2);
- /// LLL   else
- /// LLL     instrMem += 1;
-
    instrMem = nextInstrMem;
-
    instrBuffer.memAddr = instrMem;
    instrBuffer.oldInstr = *instrMem;
    *instrMem = SSTEP_INSTR;
@@ -854,11 +821,6 @@ struct tab_elt opc_main[] =
  void
  undoSStep (void)
  {
- /// LLL   if (stepped)
- /// LLL     {  short *instrMem;
- /// LLL       instrMem = instrBuffer.memAddr;
- /// LLL       *instrMem = instrBuffer.oldInstr;
- /// LLL     }
    if (stepped)
      { char *instrMem;
        instrMem = instrBuffer.memAddr;
@@ -1084,7 +1046,7 @@ void sr() __naked
      push  hl
      call  _handle_exception              
      pop   af      
-
+     jp    _rr
    __endasm;
 
  }
@@ -1092,7 +1054,7 @@ void sr() __naked
 
 
 
- static void rr() __naked
+ void rr() __naked
  {
    __asm
      ld    a, (#_registers + R_A) ;; restore AF
@@ -1126,8 +1088,9 @@ void sr() __naked
      ;; put the (new?) PC back in the stack as the return address
      ld    hl, (#_registers + R_PC)
      ex    (sp), hl
-         ld    hl, (#_registers + R_HL)
+     ld    hl, (#_registers + R_HL)
 
+     ret
   __endasm;
 }
 
@@ -1434,15 +1397,6 @@ prt_e (void *pc, struct tab_elt *inst)
 }
 
 static void *
-jr_cc (void *pc, struct tab_elt *inst)
-{
-  char mytxt[TXTSIZ];
-// 
-//   snprintf (mytxt, TXTSIZ, txt, cc_str[(buf->data[0] >> 3) & 3]);
-  return prt_e (pc, inst);
-}
-
-static void *
 prt_nn (void *pc, struct tab_elt *inst)
 {
 //   int nn;
@@ -1507,7 +1461,7 @@ prt_n  (void *pc, struct tab_elt *inst)
   return (cpc + inst->inst_len);
 }
 
-static void *
+void *
 ld_r_n  (void *pc, struct tab_elt *inst)
 {
    char mytxt[TXTSIZ];
@@ -1517,7 +1471,7 @@ ld_r_n  (void *pc, struct tab_elt *inst)
    return prt_n(pc, inst);
 }
 
-static void *
+void *
 prt_r (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt,
@@ -1528,7 +1482,7 @@ prt_r (void *pc, struct tab_elt *inst)
   return (cpc + inst->inst_len);
 }
 
-static void *
+void *
 ld_r_r (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt,
@@ -1540,7 +1494,7 @@ ld_r_r (void *pc, struct tab_elt *inst)
   return (cpc + inst->inst_len);
 }
 
-static void *
+void *
 arit_r (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt,
@@ -1552,7 +1506,7 @@ arit_r (void *pc, struct tab_elt *inst)
   return (cpc + inst->inst_len);
 }
 
-static void *
+void *
 prt_cc (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, "%s%s", txt,
@@ -1562,7 +1516,7 @@ prt_cc (void *pc, struct tab_elt *inst)
   return pc + inst->inst_len;
 }
 
-static void *
+void *
 pop_rr (void *pc, struct tab_elt *inst)
 {
 //   static char *rr_stack[] = { "bc","de","hl","af"};
@@ -1575,8 +1529,7 @@ pop_rr (void *pc, struct tab_elt *inst)
   return (cpc + inst->inst_len);
 }
 
-
-static void *
+void *
 jp_cc_nn (void *pc, struct tab_elt *inst)
 {
   char mytxt[TXTSIZ];
@@ -1584,10 +1537,10 @@ jp_cc_nn (void *pc, struct tab_elt *inst)
 //   snprintf (mytxt,TXTSIZ,
 // 	    "%s%s,0x%%04x", txt, cc_str[(buf->data[0] >> 3) & 7]);
   return prt_nn (pc, inst);
-
 }
 
-static void *
+
+void *
 arit_n (void *pc, struct tab_elt *inst)
 {
   char mytxt[TXTSIZ];
@@ -1596,7 +1549,7 @@ arit_n (void *pc, struct tab_elt *inst)
   return prt_n (pc, inst);
 }
 
-static void *
+void *
 rst (void *pc, struct tab_elt *inst)
 {
 //   info->fprintf_func (info->stream, txt, buf->data[0] & 0x38);
@@ -1716,7 +1669,7 @@ pe_djnz (void *pc, struct tab_elt *inst)
     return (cpc + inst->inst_len); 
   else
     {    // result of dec wasn't Z, so we jump e
-      int e = cpc[1];
+      char e = cpc[1];
       return (cpc + e + 2);
     }
 }
@@ -1727,7 +1680,27 @@ pe_jp_nn (void *pc, struct tab_elt *inst)
   char *cpc = (char *)pc;
   short nn = cpc[1]; // immediate nn for the jp
   return (nn);
+}
 
+void *
+pe_jp_cc_nn (void *pc, struct tab_elt *inst)
+{
+  char *cpc = (char *)pc;
+  char  opcode = *cpc;
+  char  condition = (opcode & ~(inst->mask)) >> 3;
+  short nn = cpc[1]; // immediate nn for the jp
+
+  if (cc_holds(condition))
+    {
+      // jump is effective
+      // pc will jump to the immediate address
+      return pe_jp_nn(pc, inst);
+    }
+  else
+    { // conditional jump won't take place
+      // move PC to the next instruction
+      return (cpc + inst->inst_len);
+    }
 }
 
 void *
@@ -1738,28 +1711,55 @@ pe_jr (void *pc, struct tab_elt *inst)
   return (cpc + e + 2);
 }
 
-enum {cond_NZ, cond_Z, cond_NC, cond_C};
+// condition codes values (000, 001, 010, ... 111)
+enum { 
+  cond_NZ, 
+  cond_Z, 
+  cond_NC,
+  cond_C,
+  cond_PO,
+  cond_PE,
+  cond_P,
+  cond_M
+};
 
-int cc_holds(char cond)
+char cc_holds(char cond)
 {
+// Z80 FLAG BITFIELD: SZ5H3PNC
+#define SIGN_FLAG_MASK     0x80 // (1 << 7) 
+#define ZERO_FLAG_MASK     0x40 // (1 << 6) 
+#define PARITY_FLAG_MASK   0x04 // (1 << 2) 
+#define CARRY_FLAG_MASK    0x01 // (1 << 0)  
+
   char flags = registers.f;
-  int  holds = 0;
+  char holds = 0;
   switch (cond)
     {
     case cond_NZ:
-      holds = ~(flags && 0x40);
+      holds = ~(flags & ZERO_FLAG_MASK);
       break;
     case cond_Z:
-      holds =  (flags && 0x40);
+      holds =  (flags & ZERO_FLAG_MASK);
       break;
     case cond_NC:
-      holds = ~(flags && 0x01);
+      holds = ~(flags & CARRY_FLAG_MASK);
       break;
     case cond_C:
-      holds =  (flags && 0x01);
+      holds =  (flags & CARRY_FLAG_MASK);
+      break;
+    case cond_PO:
+      holds = ~(flags & PARITY_FLAG_MASK);
+      break;
+    case cond_PE:
+      holds =  (flags & PARITY_FLAG_MASK);
+      break;
+    case cond_P:
+      holds = ~(flags & SIGN_FLAG_MASK);
+      break;
+    case cond_M:
+      holds =  (flags & SIGN_FLAG_MASK);
       break;
     }
-
   return holds;
 }
 
@@ -1768,18 +1768,19 @@ void *
 pe_jr_cc (void *pc, struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
-  char  opcode = *cpc;
-  char  condition = (opcode && ~(inst->mask)) >> 3;
-  
-  int e = 0;
+  char e = 0;
+
+  unsigned char opcode = *cpc;
+  unsigned char condition_mask = ~(inst->mask);
+  unsigned char condition = (opcode & condition_mask);
+  condition = condition >> 3;
 
   if (cc_holds(condition))
     {
       // jump is effective
       e =  cpc[1]; //  relative offset for the jump
     }
-  // SZ5H3PNC
-  //  44 / 0100 0100 / Z P
+
   return (cpc + e + 2);
 }
 
@@ -1790,6 +1791,24 @@ pe_ret (void *pc, struct tab_elt *inst)
   return ret_addr;
 }
 
+void *
+pe_ret_cc (void *pc, struct tab_elt *inst)
+{
+  char *cpc = (char *)pc;
+  char  opcode = *cpc;
+  char  condition = (opcode & ~(inst->mask)) >> 3;
+  
+  if (cc_holds(condition))
+    {
+      // ret is effective
+      return pe_ret(pc, inst);
+    }
+  else
+    { // conditional ret won't take place
+      // move PC to the next instruction
+      return (cpc + inst->inst_len);
+    }
+}
 
 /* pacify the compiler */
 void main () {}
