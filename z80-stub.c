@@ -347,9 +347,9 @@ void *jp_cc_nn (void *pc, struct tab_elt *inst);
 void *arit_n (void *pc, struct tab_elt *inst);
 void *rst (void *pc, struct tab_elt *inst);
 static void *pref_cb (void *pc, struct tab_elt *inst);
+static void *pref_ed (void *pc, struct tab_elt *inst);
 static void *pref_ind (void *pc, struct tab_elt *inst);
 static void *pref_xd_cb (void *pc, struct tab_elt *inst);
-static void *pref_ed (void *pc, struct tab_elt *inst);
 void *pe_djnz (void *pc, struct tab_elt *inst);
 void *pe_jp_nn (void *pc, struct tab_elt *inst);
 void *pe_jp_cc_nn (void *pc, struct tab_elt *inst);
@@ -408,7 +408,7 @@ static struct tab_elt opc_main[] =
   { 0xC6, 0xC7, arit_n      , "%s0x%%02x",      2 },
   { 0xC7, 0xC7, pe_rst      , "rst 0x%02x",     1 },
   { 0xC9, 0xFF, pe_ret      , "ret",            1 },
-  { 0xCB, 0xFF, pref_cb     , "",               0 },
+  { 0xCB, 0xFF, pref_cb     , "",               2 },
   { 0xCD, 0xFF, pe_jp_nn    , "call 0x%04x",    3 },
   { 0xD3, 0xFF, prt_n       , "out (0x%02x),a", 2 },
   { 0xD9, 0xFF, prt         , "exx",            1 },
@@ -424,6 +424,77 @@ static struct tab_elt opc_main[] =
   { 0xFD, 0xFF, pref_ind    , "iy",             0 },
   { 0x00, 0x00, prt         , "????"          , 1 },
 } ;
+
+/* ED prefix opcodes table.
+   Note the instruction length _doesn't_ include the ED prefix)
+*/
+struct tab_elt opc_ed[] =
+{
+  { 0x70, 0xFF, prt       , "", 1 }, // "in f,(c)"       
+  { 0x70, 0xFF, NULL      , "", 1 }, // "xx"             
+  { 0x40, 0xC7, prt_r     , "", 1 }, // "in %s,(c)"      
+  { 0x71, 0xFF, prt       , "", 1 }, // "out (c),0"      
+  { 0x70, 0xFF, NULL      , "", 1 }, // "xx"             
+  { 0x41, 0xC7, prt_r     , "", 1 }, // "out (c),%s"     
+  { 0x42, 0xCF, prt_rr    , "", 1 }, // "sbc hl,"        
+  { 0x43, 0xCF, prt_rr_nn , "", 3 }, // "ld (0x%%04x),%s"
+  { 0x44, 0xFF, prt       , "", 1 }, // "neg"            
+  { 0x45, 0xFF, prt       , "", 1 }, // "retn"           
+  { 0x46, 0xFF, prt       , "", 1 }, // "im 0"           
+  { 0x47, 0xFF, prt       , "", 1 }, // "ld i,a"         
+  { 0x4A, 0xCF, prt_rr    , "", 1 }, // "adc hl,"        
+  { 0x4B, 0xCF, prt_rr_nn , "", 3 }, // "ld %s,(0x%%04x)"
+  { 0x4D, 0xFF, prt       , "", 1 }, // "reti"           
+  { 0x4F, 0xFF, prt       , "", 1 }, // "ld r,a"         
+  { 0x56, 0xFF, prt       , "", 1 }, // "im 1"           
+  { 0x57, 0xFF, prt       , "", 1 }, // "ld a,i"         
+  { 0x5E, 0xFF, prt       , "", 1 }, // "im 2"           
+  { 0x5F, 0xFF, prt       , "", 1 }, // "ld a,r"         
+  { 0x67, 0xFF, prt       , "", 1 }, // "rrd"            
+  { 0x6F, 0xFF, prt       , "", 1 }, // "rld"            
+  { 0xA0, 0xE4, prt       , "", 1 }, // ""               
+  { 0xC3, 0xFF, prt       , "", 1 }, // "muluw hl,bc"    
+  { 0xC5, 0xE7, prt_r     , "", 1 }, // "mulub a,%s"     
+  { 0xF3, 0xFF, prt       , "", 1 }, // "muluw hl,sp"    
+  { 0x00, 0x00, NULL      , "", 1 }  // "xx"             
+};
+
+/* table for FD and DD prefixed instructions */
+static struct tab_elt opc_ind[] =
+{
+  { 0x24, 0xF7, prt_r      , "", 1 }, // "inc %s%%s"            
+  { 0x25, 0xF7, prt_r      , "", 1 }, // "dec %s%%s"            
+  { 0x26, 0xF7, ld_r_n     , "", 2 }, // "ld %s%%s,0x%%%%02x"   
+  { 0x21, 0xFF, prt_nn     , "", 3 }, // "ld %s,0x%%04x"        
+  { 0x22, 0xFF, prt_nn     , "", 3 }, // "ld (0x%%04x),%s"      
+  { 0x2A, 0xFF, prt_nn     , "", 3 }, // "ld %s,(0x%%04x)"      
+  { 0x23, 0xFF, prt        , "", 1 }, // "inc %s"               
+  { 0x2B, 0xFF, prt        , "", 1 }, // "dec %s"               
+  { 0x29, 0xFF, NULL       , "", 1 }, // "%s"                   
+  { 0x09, 0xCF, prt_rr     , "", 1 }, // "add %s,"              
+  { 0x34, 0xFF, NULL       , "", 2 }, // "inc (%s%%+d)"         
+  { 0x35, 0xFF, NULL       , "", 2 }, // "dec (%s%%+d)"         
+  { 0x36, 0xFF, NULL       , "", 3 }, // "ld (%s%%+d),0x%%%%02x"
+                            
+  { 0x76, 0xFF, NULL       , "", 1 }, // "h"                    
+  { 0x46, 0xC7, NULL       , "", 2 }, // "ld %%s,(%s%%%%+d)"    
+  { 0x70, 0xF8, NULL       , "", 2 }, // "ld (%s%%%%+d),%%s"    
+  { 0x64, 0xF6, NULL       , "", 1 }, // "%s"                   
+  { 0x60, 0xF0, NULL       , "", 1 }, // "ld %s%%s,%%s"         
+  { 0x44, 0xC6, NULL       , "", 1 }, // "ld %%s,%s%%s"         
+                            
+  { 0x86, 0xC7, NULL       , "", 2 }, // "%%s(%s%%%%+d)"        
+  { 0x84, 0xC6, arit_r     , "", 1 }, // "%%s%s%%s"             
+                            
+  { 0xE1, 0xFF, prt        , "", 1 }, // "pop %s"               
+  { 0xE5, 0xFF, prt        , "", 1 }, // "push %s"              
+  { 0xCB, 0xFF, pref_xd_cb , "", 0 }, // "%s"                   
+  { 0xE3, 0xFF, prt        , "", 1 }, // "ex (sp),%s"           
+  { 0xE9, 0xFF, prt        , "", 1 }, // "jp (%s)"              
+  { 0xF9, 0xFF, prt        , "", 1 }, // "ld sp,%s"             
+  { 0x00, 0x00, NULL       , "", 1 }, // "?"                    
+};
+
 
 /*
 struct tab_elt opc_main[] =
@@ -1576,51 +1647,28 @@ pe_rst (void *pc, struct tab_elt *inst)
   return (target_rst * 8);
 }
 
-static void *
+void *
 pref_cb (void *pc, struct tab_elt *inst)
 {
-//   if (fetch_data (buf, info, 1))
-//     {
-//       buf->n_used = 2;
-//       if ((buf->data[1] & 0xc0) == 0)
-// 	info->fprintf_func (info->stream, "%s %s",
-// 			    cb2_str[(buf->data[1] >> 3) & 7],
-// 			    r_str[buf->data[1] & 7]);
-//       else
-// 	info->fprintf_func (info->stream, "%s %d,%s",
-// 			    cb1_str[(buf->data[1] >> 6) & 3],
-// 			    (buf->data[1] >> 3) & 7,
-// 			    r_str[buf->data[1] & 7]);
-//     }
-//   else
-//     buf->n_used = -1;
-
-//  return buf->n_used;
-  return pc + inst->inst_len;
+  char *cpc = (char *)pc;
+  // all CB prefixed instructions have the same length (2 bytes)
+  return (cpc + inst->inst_len);
 }
 
-static void *
+void *
 pref_ind (void *pc, struct tab_elt *inst)
 {
-//   if (fetch_data (buf, info, 1))
-//     {
-//       char mytxt[TXTSIZ];
-//       struct tab_elt *p;
-// 
-//       for (p = opc_ind; p->val != (buf->data[1] & p->mask); ++p)
-// 	;
-//       snprintf (mytxt, TXTSIZ, p->text, txt);
-//       p->fp (buf, info, mytxt);
-//     }
-//   else
-//     buf->n_used = -1;
+  struct tab_elt *p;
+  char *cpc = (char *)pc;
 
-//  return buf->n_used;
-
-  return pc + inst->inst_len;
+  for (p = opc_ind; p->val != (cpc[1] & p->mask); ++p)
+    ;
+  return (pc + 
+          1  + // FD or DD  prefix
+          p->inst_len);
 }
 
-static void *
+void *
 pref_xd_cb (void *pc, struct tab_elt *inst)
 {
 //   if (fetch_data (buf, info, 2))
@@ -1659,21 +1707,14 @@ pref_xd_cb (void *pc, struct tab_elt *inst)
 static void *
 pref_ed (void *pc, struct tab_elt *inst)
 {
-//  struct tab_elt *p;
-//
-//  if (fetch_data(buf, info, 1))
-//    {
-//      for (p = opc_ed; p->val != (buf->data[1] & p->mask); ++p)
-//	;
-//      p->fp (buf, info, p->text);
-//    }
-//  else
-//    buf->n_used = -1;
+  struct tab_elt *p;
+  char *cpc = (char *)pc;
 
-//  return buf->n_used;
-
-  return pc + inst->inst_len;
-
+  for (p = opc_ed; p->val != (cpc[1] & p->mask); ++p)
+    ;
+  return (pc + 
+          1  + // ED prefix
+          p->inst_len);
 }
 // -------------------- 
 

@@ -9,9 +9,39 @@
 	jp	init
 
 	.org	0x08
-        push  hl               ;; RST 08, used for breakpoints
-        ld    hl,#08           ;; 08 means a breakpoint was hit, pass it to sr routine
-        jp    _sr              ;; TODO maybe change to saveRegisters, semantics
+        push    hl               ;; RST 08, used for breakpoints
+        ld      hl,#0x08         ;; 08 means a breakpoint was hit, pass it to sr routine
+        jp      _sr              ;; TODO maybe change to saveRegisters, semantics
+
+	.org    0x10
+        push    hl
+        ld      hl,#0x10
+        jp      _sr
+
+	.org    0x18
+        push    hl
+        ld      hl,#0x18
+        jp      _sr
+
+	.org    0x20
+        push    hl
+        ld      hl,#0x20
+        jp      _sr
+	
+	.org    0x28
+        push    hl
+        ld      hl,#0x28
+        jp      _sr
+	
+        .org    0x30
+        push    hl
+        ld      hl,#0x30
+        jp      _sr
+	
+        .org    0x38
+        push    hl
+        ld      hl,#0x38
+        jp      _sr
 
 	.org	0x100
 init:
