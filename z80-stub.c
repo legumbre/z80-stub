@@ -406,7 +406,7 @@ static struct tab_elt opc_main[] =
   { 0xC4, 0xC7, pe_jp_cc_nn , "call ",          3 },
   { 0xC5, 0xCF, pop_rr      , "push",           1 }, 
   { 0xC6, 0xC7, arit_n      , "%s0x%%02x",      2 },
-  { 0xC7, 0xC7, rst         , "rst 0x%02x",     1 },
+  { 0xC7, 0xC7, pe_rst      , "rst 0x%02x",     1 },
   { 0xC9, 0xFF, pe_ret      , "ret",            1 },
   { 0xCB, 0xFF, pref_cb     , "",               0 },
   { 0xCD, 0xFF, pe_jp_nn    , "call 0x%04x",    3 },
@@ -1564,12 +1564,16 @@ arit_n (void *pc, struct tab_elt *inst)
 }
 
 void *
-rst (void *pc, struct tab_elt *inst)
+pe_rst (void *pc, struct tab_elt *inst)
 {
-//   info->fprintf_func (info->stream, txt, buf->data[0] & 0x38);
-//   buf->n_used = buf->n_fetch;
-//  return buf->n_used;
-  return pc + inst->inst_len;
+  char *cpc = (char *)pc;
+  char opcode = *cpc;
+  
+  char rst_mask            = ~(inst->mask);
+  unsigned char rst        = (opcode & rst_mask);
+  unsigned char target_rst = (rst >> 3) & 0x07;
+  
+  return (target_rst * 8);
 }
 
 static void *
