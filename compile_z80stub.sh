@@ -2,7 +2,7 @@
 rm -f crt0.o z80-stub.o
 
 as-z80 -gols crt0.o crt0.s && \
-sdcc -V -c -D TARGET_QEMU -mz80 --no-std-crt0 --stack-auto z80-stub.c -o z80-stub.o && \
+sdcc -V -c -D TARGET_Z80 -mz80 --no-std-crt0 --stack-auto z80-stub.c -o z80-stub.o && \
 sdcc -V -mz80 --no-peep --no-std-crt0 --data-loc 0x8000 --stack-auto crt0.o z80-stub.o && \
 srec_cat crt0.ihx -Intel -output z80stub.bin -Binary && \
 cat z80stub.bin /dev/zero | dd bs=1k count=16 > /opt/qemu-z80/share/qemu/zx-rom.bin

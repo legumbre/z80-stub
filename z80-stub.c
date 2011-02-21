@@ -1084,182 +1084,11 @@ void sr() __naked
   __endasm;
 }
 
-/* Support for Serial I/O using on chip uart */
-
-#define SMR0 (*(volatile char *)(0x05FFFEC0)) /* Channel 0  serial mode register */
-#define BRR0 (*(volatile char *)(0x05FFFEC1)) /* Channel 0  bit rate register */
-#define SCR0 (*(volatile char *)(0x05FFFEC2)) /* Channel 0  serial control register */
-#define TDR0 (*(volatile char *)(0x05FFFEC3)) /* Channel 0  transmit data register */
-#define SSR0 (*(volatile char *)(0x05FFFEC4)) /* Channel 0  serial status register */
-#define RDR0 (*(volatile char *)(0x05FFFEC5)) /* Channel 0  receive data register */
-
-#define SMR1 (*(volatile char *)(0x05FFFEC8)) /* Channel 1  serial mode register */
-#define BRR1 (*(volatile char *)(0x05FFFEC9)) /* Channel 1  bit rate register */
-#define SCR1 (*(volatile char *)(0x05FFFECA)) /* Channel 1  serial control register */
-#define TDR1 (*(volatile char *)(0x05FFFECB)) /* Channel 1  transmit data register */
-#define SSR1 (*(volatile char *)(0x05FFFECC)) /* Channel 1  serial status register */
-#define RDR1 (*(volatile char *)(0x05FFFECD)) /* Channel 1  receive data register */
-
-/*
- * Serial mode register bits
- */
-
-#define SYNC_MODE               0x80
-#define SEVEN_BIT_DATA          0x40
-#define PARITY_ON               0x20
-#define ODD_PARITY              0x10
-#define STOP_BITS_2             0x08
-#define ENABLE_MULTIP           0x04
-#define PHI_64                  0x03
-#define PHI_16                  0x02
-#define PHI_4                   0x01
-
-/*
- * Serial control register bits
- */
-#define SCI_TIE                         0x80    /* Transmit interrupt enable */
-#define SCI_RIE                         0x40    /* Receive interrupt enable */
-#define SCI_TE                          0x20    /* Transmit enable */
-#define SCI_RE                          0x10    /* Receive enable */
-#define SCI_MPIE                        0x08    /* Multiprocessor interrupt enable */
-#define SCI_TEIE                        0x04    /* Transmit end interrupt enable */
-#define SCI_CKE1                        0x02    /* Clock enable 1 */
-#define SCI_CKE0                        0x01    /* Clock enable 0 */
-
-/*
- * Serial status register bits
- */
-#define SCI_TDRE                        0x80    /* Transmit data register empty */
-#define SCI_RDRF                        0x40    /* Receive data register full */
-#define SCI_ORER                        0x20    /* Overrun error */
-#define SCI_FER                         0x10    /* Framing error */
-#define SCI_PER                         0x08    /* Parity error */
-#define SCI_TEND                        0x04    /* Transmit end */
-#define SCI_MPB                         0x02    /* Multiprocessor bit */
-#define SCI_MPBT                        0x01    /* Multiprocessor bit transfer */
-
-
-/*
- * Port B IO Register (PBIOR)
- */
-#define PBIOR           (*(volatile char *)(0x05FFFFC6))
-#define PB15IOR         0x8000
-#define PB14IOR         0x4000
-#define PB13IOR         0x2000
-#define PB12IOR         0x1000
-#define PB11IOR         0x0800
-#define PB10IOR         0x0400
-#define PB9IOR          0x0200
-#define PB8IOR          0x0100
-#define PB7IOR          0x0080
-#define PB6IOR          0x0040
-#define PB5IOR          0x0020
-#define PB4IOR          0x0010
-#define PB3IOR          0x0008
-#define PB2IOR          0x0004
-#define PB1IOR          0x0002
-#define PB0IOR          0x0001
-
-/*
- * Port B Control Register (PBCR1)
- */
-#define PBCR1           (*(volatile short *)(0x05FFFFCC))
-#define PB15MD1         0x8000
-#define PB15MD0         0x4000
-#define PB14MD1         0x2000
-#define PB14MD0         0x1000
-#define PB13MD1         0x0800
-#define PB13MD0         0x0400
-#define PB12MD1         0x0200
-#define PB12MD0         0x0100
-#define PB11MD1         0x0080
-#define PB11MD0         0x0040
-#define PB10MD1         0x0020
-#define PB10MD0         0x0010
-#define PB9MD1          0x0008
-#define PB9MD0          0x0004
-#define PB8MD1          0x0002
-#define PB8MD0          0x0001
-
-#define PB15MD          PB15MD1|PB14MD0
-#define PB14MD          PB14MD1|PB14MD0
-#define PB13MD          PB13MD1|PB13MD0
-#define PB12MD          PB12MD1|PB12MD0
-#define PB11MD          PB11MD1|PB11MD0
-#define PB10MD          PB10MD1|PB10MD0
-#define PB9MD           PB9MD1|PB9MD0
-#define PB8MD           PB8MD1|PB8MD0
-
-#define PB_TXD1         PB11MD1
-#define PB_RXD1         PB10MD1
-#define PB_TXD0         PB9MD1
-#define PB_RXD0         PB8MD1
-
-/*
- * Port B Control Register (PBCR2)
- */
-#define PBCR2   0x05FFFFCE
-#define PB7MD1  0x8000
-#define PB7MD0  0x4000
-#define PB6MD1  0x2000
-#define PB6MD0  0x1000
-#define PB5MD1  0x0800
-#define PB5MD0  0x0400
-#define PB4MD1  0x0200
-#define PB4MD0  0x0100
-#define PB3MD1  0x0080
-#define PB3MD0  0x0040
-#define PB2MD1  0x0020
-#define PB2MD0  0x0010
-#define PB1MD1  0x0008
-#define PB1MD0  0x0004
-#define PB0MD1  0x0002
-#define PB0MD0  0x0001
-        
-#define PB7MD   PB7MD1|PB7MD0
-#define PB6MD   PB6MD1|PB6MD0
-#define PB5MD   PB5MD1|PB5MD0
-#define PB4MD   PB4MD1|PB4MD0
-#define PB3MD   PB3MD1|PB3MD0
-#define PB2MD   PB2MD1|PB2MD0
-#define PB1MD   PB1MD1|PB1MD0
-#define PB0MD   PB0MD1|PB0MD0
-
-
-#ifdef MHZ
-#define BPS                     32 * 9600 * MHZ / ( BAUD * 10)
-#else
-#define BPS                     32      /* 9600 for 10 Mhz */
-#endif
-
 void handleError (char theSSR);
 
 void 
 init_serial (void)
 {
-  int i;
-
-  /* Clear TE and RE in Channel 1's SCR   */
-  SCR1 &= ~(SCI_TE | SCI_RE);
-
-  /* Set communication to be async, 8-bit data, no parity, 1 stop bit and use internal clock */
-
-  SMR1 = 0;
-  BRR1 = BPS;
-
-  SCR1 &= ~(SCI_CKE1 | SCI_CKE0);
-
-  /* let the hardware settle */
-
-  for (i = 0; i < 1000; i++)
-    ;
-
-  /* Turn on in and out */
-  SCR1 |= SCI_RE | SCI_TE;
-
-  /* Set the PFC to make RXD1 (pin PB8) an input pin and TXD1 (pin PB9) an output pin */
-  PBCR1 &= ~(PB_TXD1 | PB_RXD1);
-  PBCR1 |= PB_TXD1 | PB_RXD1;
 }
 
 
@@ -1623,7 +1452,8 @@ handle_monitor_command(char *qRcmd_payload)
           cmdstr += strlen("(0x");
           if (hexToInt(&cmdstr, &out_port)) // a two hex digit port address was read
             {
-              while (*cmdstr++ == ' ' || *cmdstr == ','); // ignore extra whitespace and comma
+              // ignore trailing ' )' and extra whitespace and comma
+              while (*++cmdstr == ' ' || *cmdstr == ','); 
               
               if (!strncmp("0x", cmdstr, strlen("0x"))) // out value starts with 0x
                 {
@@ -1687,13 +1517,13 @@ write_port(char out_port, char out_data) __naked
     push af
     
     ;; get the port argument
-
     ld c, 4 (ix)
     
     ;; get the data to write
     ld a, 5 (ix)
 
     ;; write the data to the out port     
+    ld b, #0
     out (c), a
 
     pop af
