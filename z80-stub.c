@@ -222,8 +222,6 @@
  */
 #define NUMREGBYTES 26 // 6(1byte) + 10(2bytes)
 
-
-
 /*
  * Forward declarations
  */
@@ -235,6 +233,11 @@ static char *getpacket (void);
 static void putpacket (char *);
 static int computeSignal (int exceptionVector);
 static void handle_exception (int exceptionVector);
+
+int handle_monitor_command(char *cmdstr);
+char read_port(char in_port) __naked;
+void write_port(char out_port, char out_data) __naked;
+
 void init_serial();
 
 void putDebugChar (char);
@@ -242,31 +245,14 @@ char getDebugChar (void);
 
 char cc_holds(char cond);
 
+char payload_str[BUFMAX];
+
 #define catch_exception_random catch_exception_255 /* Treat all odd ones like 255 */
 
 void breakpoint() __naked;
-
-
-#define init_stack_size 1024  /* if you change this you should also modify BINIT */
-#define stub_stack_size 1024
-
-int init_stack[init_stack_size];//  __attribute__ ((section ("stack"))) = {0};
-int stub_stack[stub_stack_size];//  __attribute__ ((section ("stack"))) = {0};
-
-char useless_buffer[30];
-
 void INIT ();
-void BINIT ();
 
-#define CPU_BUS_ERROR_VEC  9
-#define DMA_BUS_ERROR_VEC 10
-#define NMI_VEC           11
-#define INVALID_INSN_VEC   4
-#define INVALID_SLOT_VEC   6
-#define TRAP_VEC          32
-#define IO_VEC            33
-#define USER_VEC         255
-
+#define Z80_NMI           0x64
 #define Z80_RST08_VEC      8
 
 char intcause; /* TODO: initialize */
@@ -274,8 +260,6 @@ char in_nmi;   /* Set when handling an NMI, so we don't reenter */
 int dofault;  /* Non zero, bus errors will raise exception */
 
 char read_ch; /* TODO byte read from serial port, for now it's a global */
-
-int *stub_sp;
 
 /* debug > 0 prints ill-formed commands in valid packets & checksum errors */
 int remote_debug;
@@ -325,247 +309,164 @@ struct tab_elt
   unsigned char val;
   unsigned char mask;
   void * (*fp)(void *pc, struct tab_elt *inst);
-  char *        text;
   unsigned char inst_len;
 } ;
 
 /* PSEUDO EVAL FUNCTIONS */
-static void *prt (void *pc, struct tab_elt *inst);
-static void *prt_e (void *pc, struct tab_elt *inst);
-static void *jr_cc (void *pc, struct tab_elt *inst);
-static void *prt_nn (void *pc, struct tab_elt *inst);
-static void *prt_rr_nn (void *pc, struct tab_elt *inst);
-static void *prt_rr (void *pc, struct tab_elt *inst);
-static void *prt_n  (void *pc, struct tab_elt *inst);
-void *ld_r_n  (void *pc, struct tab_elt *inst);
-void *prt_r (void *pc, struct tab_elt *inst);
-void *ld_r_r (void *pc, struct tab_elt *inst);
-void *arit_r (void *pc, struct tab_elt *inst);
-void *prt_cc (void *pc, struct tab_elt *inst);
-void *pop_rr (void *pc, struct tab_elt *inst);
-void *jp_cc_nn (void *pc, struct tab_elt *inst);
-void *arit_n (void *pc, struct tab_elt *inst);
-void *rst (void *pc, struct tab_elt *inst);
-static void *pref_cb (void *pc, struct tab_elt *inst);
-static void *pref_ed (void *pc, struct tab_elt *inst);
-static void *pref_ind (void *pc, struct tab_elt *inst);
-static void *pref_xd_cb (void *pc, struct tab_elt *inst);
-void *pe_djnz (void *pc, struct tab_elt *inst);
-void *pe_jp_nn (void *pc, struct tab_elt *inst);
-void *pe_jp_cc_nn (void *pc, struct tab_elt *inst);
-void *pe_jr (void *pc, struct tab_elt *inst);
-void *pe_jr_cc (void *pc, struct tab_elt *inst);
-void *pe_ret (void *pc, struct tab_elt *inst);
-void *pe_ret_cc (void *pc, struct tab_elt *inst);
-
+void *rst (void *pc, const struct tab_elt *inst);
+void *pref_cb (void *pc, const struct tab_elt *inst);
+void *pref_ed (void *pc, const struct tab_elt *inst);
+void *pref_ind (void *pc, const struct tab_elt *inst);
+void *pref_xd_cb (void *pc, const struct tab_elt *inst);
+void *pe_djnz (void *pc, const struct tab_elt *inst);
+void *pe_jp_nn (void *pc, const struct tab_elt *inst);
+void *pe_jp_cc_nn (void *pc, const struct tab_elt *inst);
+void *pe_jr (void *pc, const struct tab_elt *inst);
+void *pe_jr_cc (void *pc, const struct tab_elt *inst);
+void *pe_ret (void *pc, const struct tab_elt *inst);
+void *pe_ret_cc (void *pc, const struct tab_elt *inst);
+void *pe_rst (void *pc, const struct tab_elt *inst);
+void *pe_dummy (void *pc, const struct tab_elt *inst);
 /* end of pseudo eval functions */
 
-#define TXTSIZ 24
-
 /* Table to disassemble machine codes without prefix.  */
-static struct tab_elt opc_main[] =
+const struct tab_elt opc_main[] =
 {
-  { 0x00, 0xFF, prt         , "nop",            1 },
-  { 0x01, 0xCF, prt_rr_nn   , "ld %s,0x%%04x",  3 },
-  { 0x02, 0xFF, prt         , "ld (bc),a",      1 },
-  { 0x03, 0xCF, prt_rr      , "inc " ,          1 },
-  { 0x04, 0xC7, prt_r       , "inc %s",         1 },
-  { 0x05, 0xC7, prt_r       , "dec %s",         1 },
-  { 0x06, 0xC7, ld_r_n      , "ld %s,0x%%02x",  2 },
-  { 0x07, 0xFF, prt         , "rlca",           1 },
-  { 0x08, 0xFF, prt         , "ex af,af'",      1 },
-  { 0x09, 0xCF, prt_rr      , "add hl,",        1 },
-  { 0x0A, 0xFF, prt         , "ld a,(bc)" ,     1 },
-  { 0x0B, 0xCF, prt_rr      , "dec ",           1 },
-  { 0x0F, 0xFF, prt         , "rrca",           1 },
-  { 0x10, 0xFF, pe_djnz     , "djnz ",          2 },
-  { 0x12, 0xFF, prt         , "ld (de),a",      1 },
-  { 0x17, 0xFF, prt         , "rla",            1 },
-  { 0x18, 0xFF, pe_jr       , "jr ",            2 },
-  { 0x1A, 0xFF, prt         , "ld a,(de)",      1 },
-  { 0x1F, 0xFF, prt         , "rra",            1 },
-  { 0x20, 0xE7, pe_jr_cc    , "jr %s,",         2 },
-  { 0x22, 0xFF, prt_nn      , "ld (0x%04x),hl", 3 },
-  { 0x27, 0xFF, prt         , "daa",            1 },
-  { 0x2A, 0xFF, prt_nn      , "ld hl,(0x%04x)", 3 },
-  { 0x2F, 0xFF, prt         , "cpl",            1 },
-  { 0x32, 0xFF, prt_nn      , "ld (0x%04x),a",  3 },
-  { 0x37, 0xFF, prt         , "scf",            1 },
-  { 0x3A, 0xFF, prt_nn      , "ld a,(0x%04x)",  3 },
-  { 0x3F, 0xFF, prt         , "ccf",            1 },
-                            
-  { 0x76, 0xFF, prt         , "halt",           1 },
-  { 0x40, 0xC0, ld_r_r      , "ld %s,%s",       1 },
-                            
-  { 0x80, 0xC0, arit_r      , "%s%s",           1 },
-                            
-  { 0xC0, 0xC7, pe_ret_cc   , "ret ",           1 },
-  { 0xC1, 0xCF, pop_rr      , "pop",            1 },
-  { 0xC2, 0xC7, pe_jp_cc_nn , "jp ",            3 },
-  { 0xC3, 0xFF, pe_jp_nn    , "jp 0x%04x",      3 },
-  { 0xC4, 0xC7, pe_jp_cc_nn , "call ",          3 },
-  { 0xC5, 0xCF, pop_rr      , "push",           1 }, 
-  { 0xC6, 0xC7, arit_n      , "%s0x%%02x",      2 },
-  { 0xC7, 0xC7, pe_rst      , "rst 0x%02x",     1 },
-  { 0xC9, 0xFF, pe_ret      , "ret",            1 },
-  { 0xCB, 0xFF, pref_cb     , "",               2 },
-  { 0xCD, 0xFF, pe_jp_nn    , "call 0x%04x",    3 },
-  { 0xD3, 0xFF, prt_n       , "out (0x%02x),a", 2 },
-  { 0xD9, 0xFF, prt         , "exx",            1 },
-  { 0xDB, 0xFF, prt_n       , "in a,(0x%02x)",  2 },
-  { 0xDD, 0xFF, pref_ind    , "ix",             0 },
-  { 0xE3, 0xFF, prt         , "ex (sp),hl",     1 },
-  { 0xE9, 0xFF, prt         , "jp (hl)",        1 },
-  { 0xEB, 0xFF, prt         , "ex de,hl",       1 },
-  { 0xED, 0xFF, pref_ed     , "",               0 },
-  { 0xF3, 0xFF, prt         , "di",             1 },
-  { 0xF9, 0xFF, prt         , "ld sp,hl",       1 },
-  { 0xFB, 0xFF, prt         , "ei",             1 },
-  { 0xFD, 0xFF, pref_ind    , "iy",             0 },
-  { 0x00, 0x00, prt         , "????"          , 1 },
+  { 0x00, 0xFF, pe_dummy    ,  1 }, // "nop",           
+  { 0x01, 0xCF, pe_dummy    ,  3 }, // "ld %s,0x%%04x", 
+  { 0x02, 0xFF, pe_dummy    ,  1 }, // "ld (bc),a",     
+  { 0x03, 0xCF, pe_dummy    ,  1 }, // "inc " ,         
+  { 0x04, 0xC7, pe_dummy    ,  1 }, // "inc %s",        
+  { 0x05, 0xC7, pe_dummy    ,  1 }, // "dec %s",        
+  { 0x06, 0xC7, pe_dummy    ,  2 }, // "ld %s,0x%%02x", 
+  { 0x07, 0xFF, pe_dummy    ,  1 }, // "rlca",          
+  { 0x08, 0xFF, pe_dummy    ,  1 }, // "ex af,af'",     
+  { 0x09, 0xCF, pe_dummy    ,  1 }, // "add hl,",       
+  { 0x0A, 0xFF, pe_dummy    ,  1 }, // "ld a,(bc)" ,    
+  { 0x0B, 0xCF, pe_dummy    ,  1 }, // "dec ",          
+  { 0x0F, 0xFF, pe_dummy    ,  1 }, // "rrca",          
+  { 0x10, 0xFF, pe_djnz     ,  2 }, // "djnz ",         
+  { 0x12, 0xFF, pe_dummy    ,  1 }, // "ld (de),a",     
+  { 0x17, 0xFF, pe_dummy    ,  1 }, // "rla",           
+  { 0x18, 0xFF, pe_jr       ,  2 }, // "jr ",           
+  { 0x1A, 0xFF, pe_dummy    ,  1 }, // "ld a,(de)",     
+  { 0x1F, 0xFF, pe_dummy    ,  1 }, // "rra",           
+  { 0x20, 0xE7, pe_jr_cc    ,  2 }, // "jr %s,",        
+  { 0x22, 0xFF, pe_dummy    ,  3 }, // "ld (0x%04x),hl",
+  { 0x27, 0xFF, pe_dummy    ,  1 }, // "daa",           
+  { 0x2A, 0xFF, pe_dummy    ,  3 }, // "ld hl,(0x%04x)",
+  { 0x2F, 0xFF, pe_dummy    ,  1 }, // "cpl",           
+  { 0x32, 0xFF, pe_dummy    ,  3 }, // "ld (0x%04x),a", 
+  { 0x37, 0xFF, pe_dummy    ,  1 }, // "scf",           
+  { 0x3A, 0xFF, pe_dummy    ,  3 }, // "ld a,(0x%04x)", 
+  { 0x3F, 0xFF, pe_dummy    ,  1 }, // "ccf",           
+                                    //                  
+  { 0x76, 0xFF, pe_dummy    ,  1 }, // "halt",          
+  { 0x40, 0xC0, pe_dummy    ,  1 }, // "ld %s,%s",      
+                                    //                  
+  { 0x80, 0xC0, pe_dummy    ,  1 }, // "%s%s",          
+                                    //                  
+  { 0xC0, 0xC7, pe_ret_cc   ,  1 }, // "ret ",          
+  { 0xC1, 0xCF, pe_dummy    ,  1 }, // "pop",           
+  { 0xC2, 0xC7, pe_jp_cc_nn ,  3 }, // "jp ",           
+  { 0xC3, 0xFF, pe_jp_nn    ,  3 }, // "jp 0x%04x",     
+  { 0xC4, 0xC7, pe_jp_cc_nn ,  3 }, // "call ",         
+  { 0xC5, 0xCF, pe_dummy    ,  1 }, // "push",          
+  { 0xC6, 0xC7, pe_dummy    ,  2 }, // "%s0x%%02x",     
+  { 0xC7, 0xC7, pe_rst      ,  1 }, // "rst 0x%02x",    
+  { 0xC9, 0xFF, pe_ret      ,  1 }, // "ret",           
+  { 0xCB, 0xFF, pref_cb     ,  2 }, // "",              
+  { 0xCD, 0xFF, pe_jp_nn    ,  3 }, // "call 0x%04x",   
+  { 0xD3, 0xFF, pe_dummy    ,  2 }, // "out (0x%02x),a",
+  { 0xD9, 0xFF, pe_dummy    ,  1 }, // "exx",           
+  { 0xDB, 0xFF, pe_dummy    ,  2 }, // "in a,(0x%02x)", 
+  { 0xDD, 0xFF, pref_ind    ,  0 }, // "ix",            
+  { 0xE3, 0xFF, pe_dummy    ,  1 }, // "ex (sp),hl",    
+  { 0xE9, 0xFF, pe_dummy    ,  1 }, // "jp (hl)",       
+  { 0xEB, 0xFF, pe_dummy    ,  1 }, // "ex de,hl",      
+  { 0xED, 0xFF, pref_ed     ,  0 }, // "",              
+  { 0xF3, 0xFF, pe_dummy    ,  1 }, // "di",            
+  { 0xF9, 0xFF, pe_dummy    ,  1 }, // "ld sp,hl",      
+  { 0xFB, 0xFF, pe_dummy    ,  1 }, // "ei",            
+  { 0xFD, 0xFF, pref_ind    ,  0 }, // "iy",            
+  { 0x00, 0x00, pe_dummy    ,  1 }, // "????"
 } ;
 
 /* ED prefix opcodes table.
    Note the instruction length _doesn't_ include the ED prefix)
 */
-struct tab_elt opc_ed[] =
+const struct tab_elt opc_ed[] =
 {
-  { 0x70, 0xFF, prt       , "", 1 }, // "in f,(c)"       
-  { 0x70, 0xFF, NULL      , "", 1 }, // "xx"             
-  { 0x40, 0xC7, prt_r     , "", 1 }, // "in %s,(c)"      
-  { 0x71, 0xFF, prt       , "", 1 }, // "out (c),0"      
-  { 0x70, 0xFF, NULL      , "", 1 }, // "xx"             
-  { 0x41, 0xC7, prt_r     , "", 1 }, // "out (c),%s"     
-  { 0x42, 0xCF, prt_rr    , "", 1 }, // "sbc hl,"        
-  { 0x43, 0xCF, prt_rr_nn , "", 3 }, // "ld (0x%%04x),%s"
-  { 0x44, 0xFF, prt       , "", 1 }, // "neg"            
-  { 0x45, 0xFF, prt       , "", 1 }, // "retn"           
-  { 0x46, 0xFF, prt       , "", 1 }, // "im 0"           
-  { 0x47, 0xFF, prt       , "", 1 }, // "ld i,a"         
-  { 0x4A, 0xCF, prt_rr    , "", 1 }, // "adc hl,"        
-  { 0x4B, 0xCF, prt_rr_nn , "", 3 }, // "ld %s,(0x%%04x)"
-  { 0x4D, 0xFF, prt       , "", 1 }, // "reti"           
-  { 0x4F, 0xFF, prt       , "", 1 }, // "ld r,a"         
-  { 0x56, 0xFF, prt       , "", 1 }, // "im 1"           
-  { 0x57, 0xFF, prt       , "", 1 }, // "ld a,i"         
-  { 0x5E, 0xFF, prt       , "", 1 }, // "im 2"           
-  { 0x5F, 0xFF, prt       , "", 1 }, // "ld a,r"         
-  { 0x67, 0xFF, prt       , "", 1 }, // "rrd"            
-  { 0x6F, 0xFF, prt       , "", 1 }, // "rld"            
-  { 0xA0, 0xE4, prt       , "", 1 }, // ""               
-  { 0xC3, 0xFF, prt       , "", 1 }, // "muluw hl,bc"    
-  { 0xC5, 0xE7, prt_r     , "", 1 }, // "mulub a,%s"     
-  { 0xF3, 0xFF, prt       , "", 1 }, // "muluw hl,sp"    
-  { 0x00, 0x00, NULL      , "", 1 }  // "xx"             
+  { 0x70, 0xFF, pe_dummy, 1 }, // "in f,(c)"       
+  { 0x70, 0xFF, pe_dummy, 1 }, // "xx"             
+  { 0x40, 0xC7, pe_dummy, 1 }, // "in %s,(c)"      
+  { 0x71, 0xFF, pe_dummy, 1 }, // "out (c),0"      
+  { 0x70, 0xFF, pe_dummy, 1 }, // "xx"             
+  { 0x41, 0xC7, pe_dummy, 1 }, // "out (c),%s"     
+  { 0x42, 0xCF, pe_dummy, 1 }, // "sbc hl,"        
+  { 0x43, 0xCF, pe_dummy, 3 }, // "ld (0x%%04x),%s"
+  { 0x44, 0xFF, pe_dummy, 1 }, // "neg"            
+  { 0x45, 0xFF, pe_dummy, 1 }, // "retn"           
+  { 0x46, 0xFF, pe_dummy, 1 }, // "im 0"           
+  { 0x47, 0xFF, pe_dummy, 1 }, // "ld i,a"         
+  { 0x4A, 0xCF, pe_dummy, 1 }, // "adc hl,"        
+  { 0x4B, 0xCF, pe_dummy, 3 }, // "ld %s,(0x%%04x)"
+  { 0x4D, 0xFF, pe_dummy, 1 }, // "reti"           
+  { 0x4F, 0xFF, pe_dummy, 1 }, // "ld r,a"         
+  { 0x56, 0xFF, pe_dummy, 1 }, // "im 1"           
+  { 0x57, 0xFF, pe_dummy, 1 }, // "ld a,i"         
+  { 0x5E, 0xFF, pe_dummy, 1 }, // "im 2"           
+  { 0x5F, 0xFF, pe_dummy, 1 }, // "ld a,r"         
+  { 0x67, 0xFF, pe_dummy, 1 }, // "rrd"            
+  { 0x6F, 0xFF, pe_dummy, 1 }, // "rld"            
+  { 0xA0, 0xE4, pe_dummy, 1 }, // ""               
+  { 0xC3, 0xFF, pe_dummy, 1 }, // "muluw hl,bc"    
+  { 0xC5, 0xE7, pe_dummy, 1 }, // "mulub a,%s"     
+  { 0xF3, 0xFF, pe_dummy, 1 }, // "muluw hl,sp"    
+  { 0x00, 0x00, pe_dummy, 1 }  // "xx"             
 };
 
 /* table for FD and DD prefixed instructions */
-static struct tab_elt opc_ind[] =
+const struct tab_elt opc_ind[] =
 {
-  { 0x24, 0xF7, prt_r      , "", 1 }, // "inc %s%%s"            
-  { 0x25, 0xF7, prt_r      , "", 1 }, // "dec %s%%s"            
-  { 0x26, 0xF7, ld_r_n     , "", 2 }, // "ld %s%%s,0x%%%%02x"   
-  { 0x21, 0xFF, prt_nn     , "", 3 }, // "ld %s,0x%%04x"        
-  { 0x22, 0xFF, prt_nn     , "", 3 }, // "ld (0x%%04x),%s"      
-  { 0x2A, 0xFF, prt_nn     , "", 3 }, // "ld %s,(0x%%04x)"      
-  { 0x23, 0xFF, prt        , "", 1 }, // "inc %s"               
-  { 0x2B, 0xFF, prt        , "", 1 }, // "dec %s"               
-  { 0x29, 0xFF, NULL       , "", 1 }, // "%s"                   
-  { 0x09, 0xCF, prt_rr     , "", 1 }, // "add %s,"              
-  { 0x34, 0xFF, NULL       , "", 2 }, // "inc (%s%%+d)"         
-  { 0x35, 0xFF, NULL       , "", 2 }, // "dec (%s%%+d)"         
-  { 0x36, 0xFF, NULL       , "", 3 }, // "ld (%s%%+d),0x%%%%02x"
+  { 0x24, 0xF7, pe_dummy   , 1 }, // "inc %s%%s"            
+  { 0x25, 0xF7, pe_dummy   , 1 }, // "dec %s%%s"            
+  { 0x26, 0xF7, pe_dummy   , 2 }, // "ld %s%%s,0x%%%%02x"   
+  { 0x21, 0xFF, pe_dummy   , 3 }, // "ld %s,0x%%04x"        
+  { 0x22, 0xFF, pe_dummy   , 3 }, // "ld (0x%%04x),%s"      
+  { 0x2A, 0xFF, pe_dummy   , 3 }, // "ld %s,(0x%%04x)"      
+  { 0x23, 0xFF, pe_dummy   , 1 }, // "inc %s"               
+  { 0x2B, 0xFF, pe_dummy   , 1 }, // "dec %s"               
+  { 0x29, 0xFF, pe_dummy   , 1 }, // "%s"                   
+  { 0x09, 0xCF, pe_dummy   , 1 }, // "add %s,"              
+  { 0x34, 0xFF, pe_dummy   , 2 }, // "inc (%s%%+d)"         
+  { 0x35, 0xFF, pe_dummy   , 2 }, // "dec (%s%%+d)"         
+  { 0x36, 0xFF, pe_dummy   , 3 }, // "ld (%s%%+d),0x%%%%02x"
+                        
+  { 0x76, 0xFF, pe_dummy   , 1 }, // "h"                    
+  { 0x46, 0xC7, pe_dummy   , 2 }, // "ld %%s,(%s%%%%+d)"    
+  { 0x70, 0xF8, pe_dummy   , 2 }, // "ld (%s%%%%+d),%%s"    
+  { 0x64, 0xF6, pe_dummy   , 1 }, // "%s"                   
+  { 0x60, 0xF0, pe_dummy   , 1 }, // "ld %s%%s,%%s"         
+  { 0x44, 0xC6, pe_dummy   , 1 }, // "ld %%s,%s%%s"         
+                        
+  { 0x86, 0xC7, pe_dummy   , 2 }, // "%%s(%s%%%%+d)"        
+  { 0x84, 0xC6, pe_dummy   , 1 }, // "%%s%s%%s"             
                             
-  { 0x76, 0xFF, NULL       , "", 1 }, // "h"                    
-  { 0x46, 0xC7, NULL       , "", 2 }, // "ld %%s,(%s%%%%+d)"    
-  { 0x70, 0xF8, NULL       , "", 2 }, // "ld (%s%%%%+d),%%s"    
-  { 0x64, 0xF6, NULL       , "", 1 }, // "%s"                   
-  { 0x60, 0xF0, NULL       , "", 1 }, // "ld %s%%s,%%s"         
-  { 0x44, 0xC6, NULL       , "", 1 }, // "ld %%s,%s%%s"         
-                            
-  { 0x86, 0xC7, NULL       , "", 2 }, // "%%s(%s%%%%+d)"        
-  { 0x84, 0xC6, arit_r     , "", 1 }, // "%%s%s%%s"             
-                            
-  { 0xE1, 0xFF, prt        , "", 1 }, // "pop %s"               
-  { 0xE5, 0xFF, prt        , "", 1 }, // "push %s"              
-  { 0xCB, 0xFF, pref_xd_cb , "", 0 }, // "%s"                   
-  { 0xE3, 0xFF, prt        , "", 1 }, // "ex (sp),%s"           
-  { 0xE9, 0xFF, prt        , "", 1 }, // "jp (%s)"              
-  { 0xF9, 0xFF, prt        , "", 1 }, // "ld sp,%s"             
-  { 0x00, 0x00, NULL       , "", 1 }, // "?"                    
+  { 0xE1, 0xFF, pe_dummy   , 1 }, // "pop %s"               
+  { 0xE5, 0xFF, pe_dummy   , 1 }, // "push %s"              
+  { 0xCB, 0xFF, pref_xd_cb , 0 }, // "%s"                   
+  { 0xE3, 0xFF, pe_dummy   , 1 }, // "ex (sp),%s"           
+  { 0xE9, 0xFF, pe_dummy   , 1 }, // "jp (%s)"              
+  { 0xF9, 0xFF, pe_dummy   , 1 }, // "ld sp,%s"             
+  { 0x00, 0x00, pe_dummy   , 1 }, // "?"                    
 };
 
-
-/*
-struct tab_elt opc_main[] =
- {
-   { 0x00, 0xFF, prt       , "",            1 },
-   { 0x01, 0xCF, prt_rr_nn , "",  3 },
-   { 0x02, 0xFF, prt       , "",      1 },
-   { 0x03, 0xCF, prt_rr    , "" ,          1 },
-   { 0x04, 0xC7, prt_r     , "",         1 },
-   { 0x05, 0xC7, prt_r     , "",         1 },
-   { 0x06, 0xC7, ld_r_n    , "",  2 },
-   { 0x07, 0xFF, prt       , "",           1 },
-   { 0x08, 0xFF, prt       , "",      1 },
-   { 0x09, 0xCF, prt_rr    , "",        1 },
-   { 0x0A, 0xFF, prt       , "" ,     1 },
-   { 0x0B, 0xCF, prt_rr    , "",           1 },
-   { 0x0F, 0xFF, prt       , "",           1 },
-   { 0x10, 0xFF, pe_djnz   , "",          2 },
-   { 0x12, 0xFF, prt       , "",      1 },
-   { 0x17, 0xFF, prt       , "",            1 },
-   { 0x18, 0xFF, prt_e     , "",            2 },
-   { 0x1A, 0xFF, prt       , "",      1 },
-   { 0x1F, 0xFF, prt       , "",            1 },
-   { 0x20, 0xE7, jr_cc     , "",         1 },
-   { 0x22, 0xFF, prt_nn    , "", 3 },
-   { 0x27, 0xFF, prt       , "",            1 },
-   { 0x2A, 0xFF, prt_nn    , "", 3 },
-   { 0x2F, 0xFF, prt       , "",            1 },
-   { 0x32, 0xFF, prt_nn    , "",  3 },
-   { 0x37, 0xFF, prt       , "",            1 },
-   { 0x3A, 0xFF, prt_nn    , "",  3 },
-   { 0x3F, 0xFF, prt       , "",            1 },
-
-   { 0x76, 0xFF, prt       , "",           1 },
-   { 0x40, 0xC0, ld_r_r    , "",       1 },
-
-   { 0x80, 0xC0, arit_r    , "",           1 },
-
-   { 0xC0, 0xC7, prt_cc    , "",           1 },
-   { 0xC1, 0xCF, pop_rr    , "",            1 },
-   { 0xC2, 0xC7, jp_cc_nn  , "",            3 },
-   { 0xC3, 0xFF, prt_nn    , "",      3 },
-   { 0xC4, 0xC7, jp_cc_nn  , "",          3 },
-   { 0xC5, 0xCF, pop_rr    , "",           1 }, 
-   { 0xC6, 0xC7, arit_n    , "",      2 },
-   { 0xC7, 0xC7, rst       , "",     1 },
-   { 0xC9, 0xFF, prt       , "",            1 },
-   { 0xCB, 0xFF, pref_cb   , "",               0 },
-   { 0xCD, 0xFF, prt_nn    , "",    3 },
-   { 0xD3, 0xFF, prt_n     , "", 2 },
-   { 0xD9, 0xFF, prt       , "",            1 },
-   { 0xDB, 0xFF, prt_n     , "",  2 },
-   { 0xDD, 0xFF, pref_ind  , "",             0 },
-   { 0xE3, 0xFF, prt       , "",     1 },
-   { 0xE9, 0xFF, prt       , "",        1 },
-   { 0xEB, 0xFF, prt       , "",       1 },
-   { 0xED, 0xFF, pref_ed   , "",               0 },
-   { 0xF3, 0xFF, prt       , "",             1 },
-   { 0xF9, 0xFF, prt       , "",       1 },
-   { 0xFB, 0xFF, prt       , "",             1 },
-   { 0xFD, 0xFF, pref_ind  , "",             0 },
-   { 0x00, 0x00, prt       , ""          , 1 },
- } ;
-*/
-
-
-
- void
- INIT (void)
- {
+void
+INIT (void)
+{
    __asm
+
      jp    _RESET
      nop
      nop
@@ -577,488 +478,492 @@ struct tab_elt opc_main[] =
      jp    _sr              ;; TODO maybe change to saveRegisters, semantics
 
     __endasm;
- }
+}
 
- void
- RESET (void) __naked
- {
+void
+RESET (void) __naked
+{
 
- #ifdef MONITOR
-   reset_hook ();
- #endif
+#ifdef MONITOR
+  reset_hook ();
+#endif
 
-   in_nmi = 0;
-   dofault = 1;
-   stepped = 0;
+  in_nmi = 0;
+  dofault = 1;
+  stepped = 0;
 
-   stub_sp = stub_stack + stub_stack_size;
-   breakpoint();
+  breakpoint();
 
-   while (1)
-     ;
- }
+  while (1)
+    ;
+}
 
- char highhex(int  x)
- {
-   return hexchars[(x >> 4) & 0xf];
- }
+char highhex(int  x)
+{
+  return hexchars[(x >> 4) & 0xf];
+}
 
- char lowhex(int  x)
- {
-   return hexchars[x & 0xf];
- }
+char lowhex(int  x)
+{
+  return hexchars[x & 0xf];
+}
 
- /*
-  * Assembly macros
-  */
-
-
- /*
-  * Routines to handle hex data
-  */
-
- static int
- hex (char ch)
- {
-   if ((ch >= 'a') && (ch <= 'f'))
-     return (ch - 'a' + 10);
-   if ((ch >= '0') && (ch <= '9'))
-     return (ch - '0');
-   if ((ch >= 'A') && (ch <= 'F'))
-     return (ch - 'A' + 10);
-   return (-1);
- }
-
- /* convert the memory, pointed to by mem into hex, placing result in buf */
- /* return a pointer to the last char put in buf (null) */
- static char *
- mem2hex (char *mem, char *buf, int count)
- {
-   int i;
-   int ch;
-   for (i = 0; i < count; i++)
-     {
-       ch = *mem++;
-       *buf++ = highhex (ch);
-       *buf++ = lowhex (ch);
-     }
-   *buf = 0;
-   return (buf);
- }
-
- /* convert the hex array pointed to by buf into binary, to be placed in mem */
- /* return a pointer to the character after the last byte written */
-
- static char *
- hex2mem (char *buf, char *mem, int count)
- {
-   int i;
-   unsigned char ch;
-   for (i = 0; i < count; i++)
-     {
-       ch = hex (*buf++) << 4;
-       ch = ch + hex (*buf++);
-       *mem++ = ch;
-     }
-   return (mem);
- }
-
- /**********************************************/
- /* WHILE WE FIND NICE HEX CHARS, BUILD AN INT */
- /* RETURN NUMBER OF CHARS PROCESSED           */
- /**********************************************/
- static int
- hexToInt (char **ptr, int *intValue)
- {
-   int numChars = 0;
-   int hexValue;
-
-   *intValue = 0;
-
-   while (**ptr)
-     {
-       hexValue = hex (**ptr);
-       if (hexValue >= 0)
-         {
-           *intValue = (*intValue << 4) | hexValue;
-           numChars++;
-         }
-       else
-         break;
-
-       (*ptr)++;
-     }
-
-   return (numChars);
- }
-
- /*
-  * Routines to get and put packets
-  */
-
- /* scan for the sequence $<data>#<checksum>     */
-
- char *
- getpacket (void)
- {
-   unsigned char *buffer = &remcomInBuffer[0];
-   unsigned char checksum;
-   unsigned char xmitcsum;
-   int count;
-   char ch;
-
-   while (1)
-     {
-       /* wait around for the start character, ignore all other characters */
-       while ((ch = getDebugChar ()) != '$')
-         ;
-
- retry:
-       checksum = 0;
-       xmitcsum = -1;
-       count = 0;
-
-       /* now, read until a # or end of buffer is found */
-       while (count < BUFMAX - 1)
-         {
-           ch = getDebugChar ();
-           if (ch == '$')
-             goto retry;
-           if (ch == '#')
-             break;
-           checksum = checksum + ch;
-           buffer[count] = ch;
-           count = count + 1;
-         }
-       buffer[count] = 0;
-
-       if (ch == '#')
-         {
-           ch = getDebugChar ();
-           xmitcsum = hex (ch) << 4;
-           ch = getDebugChar ();
-           xmitcsum += hex (ch);
-
-           if (checksum != xmitcsum)
-             {
-               putDebugChar ('-');       /* failed checksum */
-             }
-           else
-             {
-               putDebugChar ('+');       /* successful transfer */
-
-               /* if a sequence char is present, reply the sequence ID */
-               if (buffer[2] == ':')
-                 {
-                   putDebugChar (buffer[0]);
-                   putDebugChar (buffer[1]);
-
-                   return &buffer[3];
-                 }
-
-               return &buffer[0];
-             }
-         }
-     }
- }
-
-
- /* send the packet in buffer. */
-
- static void
- putpacket (char *buffer)
- {
-   int checksum;
-
-   /*  $<packet info>#<checksum>. */
-   do
-     {
-       char *src = buffer;
-       putDebugChar ('$');
-       checksum = 0;
-
-       while (*src)
-         {
-           int runlen;
-
-           /* Do run length encoding */
-           for (runlen = 0; runlen < 100; runlen ++) 
-             {
-               if (src[0] != src[runlen]) 
-                 {
-                   if (runlen > 3) 
-                     {
-                       int encode;
-                       /* Got a useful amount */
-                       putDebugChar (*src);
-                       checksum += *src;
-                       putDebugChar ('*');
-                       checksum += '*';
-                       checksum += (encode = runlen + ' ' - 4);
-                       putDebugChar (encode);
-                       src += runlen;
-                     }
-                   else
-                     {
-                       putDebugChar (*src);
-                       checksum += *src;
-                       src++;
-                     }
-                   break;
-                 }
-             }
-         }
-
-
-       putDebugChar ('#');
-       putDebugChar (highhex(checksum));
-       putDebugChar (lowhex(checksum));
-     }
-   while  (getDebugChar() != '+');
- }
-
-
- /*
-  * this function takes the SH-1 exception number and attempts to
-  * translate this number into a unix compatible signal value
-  */
- static int
- computeSignal (int exceptionVector)
- {
-   int sigval;
-   switch (exceptionVector)
-     {
-     case INVALID_INSN_VEC:
-       sigval = 4;
-       break;                    
-     case INVALID_SLOT_VEC:
-       sigval = 4;
-       break;                    
-     case CPU_BUS_ERROR_VEC:
-       sigval = 10;
-       break;                    
-     case DMA_BUS_ERROR_VEC:
-       sigval = 10;
-       break;    
-     case NMI_VEC:
-       sigval = 2;
-       break;    
-
-     case TRAP_VEC:
-     case USER_VEC:
-     case Z80_RST08_VEC:
-       sigval = 5;
-       break;
-
-     default:
-       sigval = 7;               /* "software generated"*/
-       break;
-     }
-   return (sigval);
- }
-
- void
- doSStep (void)
- {
-   char *instrMem;
-   char *nextInstrMem;
- ///LLL   int displacement;
- ///LLL   int reg;
-   unsigned short opcode;
-
-   struct tab_elt *p;
-
-   //instrMem = (short *) registers[PC];
-   instrMem = (char *) registers.pc;
-
-   opcode = *instrMem;
-   stepped = 1;
-
-   for (p = opc_main; p->val != (opcode & p->mask); ++p)
-     ;
-
-   nextInstrMem = (char *) p->fp(instrMem, p);
-
-   instrMem = nextInstrMem;
-   instrBuffer.memAddr = instrMem;
-   instrBuffer.oldInstr = *instrMem;
-   *instrMem = SSTEP_INSTR;
- }
-
-
- /* Undo the effect of a previous doSStep.  If we single stepped,
-    restore the old instruction. */
-
- void
- undoSStep (void)
- {
-   if (stepped)
-     { char *instrMem;
-       instrMem = instrBuffer.memAddr;
-       *instrMem = instrBuffer.oldInstr;
-     }
-   stepped = 0;
- }
-
- /*
- This function does all exception handling.  It only does two things -
- it figures out why it was called and tells gdb, and then it reacts
- to gdb's requests.
-
- When in the monitor mode we talk a human on the serial line rather than gdb.
-
+/*
+ * Assembly macros
  */
- void
- gdb_handle_exception (int exceptionVector)
- {
-   int sigval, stepping;
-   int addr, length;
-   char *ptr;
-
-   /* reply to host that an exception has occurred */
-   sigval = computeSignal (exceptionVector);
-   remcomOutBuffer[0] = 'S';
-   remcomOutBuffer[1] = highhex(sigval);
-   remcomOutBuffer[2] = lowhex (sigval);
-   remcomOutBuffer[3] = 0;
-
-   putpacket (remcomOutBuffer);
-
-   /*
-    * Exception 0x08 means a RST 08 instruction (breakpoint) inserted in
-    * place of code
-    * 
-    * Backup PC by one instruction, this instruction will later
-    * be replaced by the original instruction at the breakpoint
-    */
-   if (exceptionVector == 0x08)
-     registers.pc -= 1;
-     // registers[R_PC] -= 1;
-
-   /*
-    * Do the thangs needed to undo
-    * any stepping we may have done!
-    */
-   undoSStep ();
-
-   stepping = 0;
-
-   while (1)
-     {
-       remcomOutBuffer[0] = 0;
-       ptr = getpacket ();
-
-       switch (*ptr++)
-         {
-         case '?':
-           remcomOutBuffer[0] = 'S';
-           remcomOutBuffer[1] = highhex (sigval);
-           remcomOutBuffer[2] = lowhex (sigval);
-           remcomOutBuffer[3] = 0;
-           break;
-         case 'd':
-           remote_debug = !(remote_debug);       /* toggle debug flag */
-           break;
-         case 'g':               /* return the value of the CPU registers */
-           mem2hex ((char *) registers, remcomOutBuffer, NUMREGBYTES);
-           break;
-         case 'G':               /* set the value of the CPU registers - return OK */
-           hex2mem (ptr, (char *) registers, NUMREGBYTES);
-           strcpy (remcomOutBuffer, "OK");
-           break;
-
-           /* mAA..AA,LLLL  Read LLLL bytes at address AA..AA */
-         case 'm':
-           dofault = 0;
-           /* TRY, TO READ %x,%x.  IF SUCCEED, SET PTR = 0 */
-           if (hexToInt (&ptr, &addr))
-             if (*(ptr++) == ',')
-               if (hexToInt (&ptr, &length))
-                 {
-                   ptr = 0;
-                   mem2hex ((char *) addr, remcomOutBuffer, length);
-                 }
-           if (ptr)
-             strcpy (remcomOutBuffer, "E01");
-
-           break;
-
-           /* MAA..AA,LLLL: Write LLLL bytes at address AA.AA return OK */
-         case 'M':
-           /* TRY, TO READ '%x,%x:'.  IF SUCCEED, SET PTR = 0 */
-           if (hexToInt (&ptr, &addr))
-             if (*(ptr++) == ',')
-               if (hexToInt (&ptr, &length))
-                 if (*(ptr++) == ':')
-                   {
-                     hex2mem (ptr, (char *) addr, length);
-                     ptr = 0;
-                     strcpy (remcomOutBuffer, "OK");
-                   }
-           if (ptr)
-             strcpy (remcomOutBuffer, "E02");
-
-           break;
-
-           /* cAA..AA    Continue at address AA..AA(optional) */
-           /* sAA..AA   Step one instruction from AA..AA(optional) */
-         case 's':
-           stepping = 1;
-         case 'c':
-           {
-             /* tRY, to read optional parameter, pc unchanged if no parm */
-             if (hexToInt (&ptr, &addr))
-               registers.pc = addr;
-               //registers[R_PC] = addr;
-             if (stepping)
-               doSStep ();
-           }
-           return;
-           break;
-
-           /* kill the program */
-         case 'k':               /* do nothing */
-           break;
-         }                       /* switch */
-
-       /* reply to the request */
-       putpacket (remcomOutBuffer);
-     }
- }
 
 
- #define GDBCOOKIE 0x5ac 
- static int ingdbmode;
- void handle_exception(int exceptionVector)
- {
-   gdb_handle_exception (exceptionVector);
- }
+/*
+ * Routines to handle hex data
+ */
 
- void
- gdb_mode (void)
- {
-   ingdbmode = GDBCOOKIE;
-   breakpoint();
- }
- /* This function will generate a breakpoint exception.  It is used at the
-    beginning of a program to sync up with a debugger and can be used
-    otherwise as a quick means to stop program execution and "break" into
-    the debugger. */
- void
- breakpoint (void) __naked
- {
-   __asm              
-   nop                
-   nop                
-   nop                
-   RST 08             
-   nop                
-   nop                
-   jp  0xb000        
-   nop                
-   nop                
-   __endasm;          
- }
+static int
+hex (char ch)
+{
+  if ((ch >= 'a') && (ch <= 'f'))
+    return (ch - 'a' + 10);
+  if ((ch >= '0') && (ch <= '9'))
+    return (ch - '0');
+  if ((ch >= 'A') && (ch <= 'F'))
+    return (ch - 'A' + 10);
+  return (-1);
+}
+
+/* convert the memory, pointed to by mem into hex, placing result in buf */
+/* return a pointer to the last char put in buf (null) */
+static char *
+mem2hex (char *mem, char *buf, int count)
+{
+  int i;
+  int ch;
+  for (i = 0; i < count; i++)
+    {
+      ch = *mem++;
+      *buf++ = highhex (ch);
+      *buf++ = lowhex (ch);
+    }
+  *buf = 0;
+  return (buf);
+}
+
+/* convert the hex array pointed to by buf into binary, to be placed in mem */
+/* return a pointer to the character after the last byte written */
+
+static char *
+hex2mem (char *buf, char *mem, int count)
+{
+  int i;
+  unsigned char ch;
+  for (i = 0; i < count; i++)
+    {
+      ch = hex (*buf++) << 4;
+      ch = ch + hex (*buf++);
+      *mem++ = ch;
+    }
+  return (mem);
+}
+
+/**********************************************/
+/* WHILE WE FIND NICE HEX CHARS, BUILD AN INT */
+/* RETURN NUMBER OF CHARS PROCESSED           */
+/**********************************************/
+static int
+hexToInt (char **ptr, int *intValue)
+{
+  int numChars = 0;
+  int hexValue;
+
+  *intValue = 0;
+
+  while (**ptr)
+    {
+      hexValue = hex (**ptr);
+      if (hexValue >= 0)
+        {
+          *intValue = (*intValue << 4) | hexValue;
+          numChars++;
+        }
+      else
+        break;
+
+      (*ptr)++;
+    }
+
+  return (numChars);
+}
+
+/*
+ * Routines to get and put packets
+ */
+
+/* scan for the sequence $<data>#<checksum>     */
+
+char *
+getpacket (void)
+{
+  unsigned char *buffer = &remcomInBuffer[0];
+  unsigned char checksum;
+  unsigned char xmitcsum;
+  int count;
+  char ch;
+
+  while (1)
+    {
+      /* wait around for the start character, ignore all other characters */
+      while ((ch = getDebugChar ()) != '$')
+        ;
+
+retry:
+      checksum = 0;
+      xmitcsum = -1;
+      count = 0;
+
+      /* now, read until a # or end of buffer is found */
+      while (count < BUFMAX - 1)
+        {
+          ch = getDebugChar ();
+          if (ch == '$')
+            goto retry;
+          if (ch == '#')
+            break;
+          checksum = checksum + ch;
+          buffer[count] = ch;
+          count = count + 1;
+        }
+      buffer[count] = 0;
+
+      if (ch == '#')
+        {
+          ch = getDebugChar ();
+          xmitcsum = hex (ch) << 4;
+          ch = getDebugChar ();
+          xmitcsum += hex (ch);
+
+          if (checksum != xmitcsum)
+            {
+              putDebugChar ('-');       /* failed checksum */
+            }
+          else
+            {
+              putDebugChar ('+');       /* successful transfer */
+
+              /* if a sequence char is present, reply the sequence ID */
+              if (buffer[2] == ':')
+                {
+                  putDebugChar (buffer[0]);
+                  putDebugChar (buffer[1]);
+
+                  return &buffer[3];
+                }
+
+              return &buffer[0];
+            }
+        }
+    }
+}
+
+
+/* send the packet in buffer. */
+
+static void
+putpacket (char *buffer)
+{
+  int checksum;
+
+  /*  $<packet info>#<checksum>. */
+  do
+    {
+      char *src = buffer;
+      putDebugChar ('$');
+      checksum = 0;
+
+      while (*src)
+        {
+          int runlen;
+
+          /* Do run length encoding */
+          for (runlen = 0; runlen < 100; runlen ++) 
+            {
+              if (src[0] != src[runlen]) 
+                {
+                  if (runlen > 3) 
+                    {
+                      int encode;
+                      /* Got a useful amount */
+                      putDebugChar (*src);
+                      checksum += *src;
+                      putDebugChar ('*');
+                      checksum += '*';
+                      checksum += (encode = runlen + ' ' - 4);
+                      putDebugChar (encode);
+                      src += runlen;
+                    }
+                  else
+                    {
+                      putDebugChar (*src);
+                      checksum += *src;
+                      src++;
+                    }
+                  break;
+                }
+            }
+        }
+
+
+      putDebugChar ('#');
+      putDebugChar (highhex(checksum));
+      putDebugChar (lowhex(checksum));
+    }
+  while  (getDebugChar() != '+');
+}
+
+
+/*
+ * this function takes the SH-1 exception number and attempts to
+ * translate this number into a unix compatible signal value
+ */
+static int
+computeSignal (int exceptionVector)
+{
+  int sigval;
+  switch (exceptionVector)
+    {
+    case Z80_NMI:
+      sigval = 2;
+      break;    
+
+    case Z80_RST08_VEC:
+      sigval = 5;
+      break;
+
+    default:
+      sigval = 7;               /* "software generated"*/
+      break;
+    }
+  return (sigval);
+}
+
+void
+doSStep (void)
+{
+  char *instrMem;
+  char *nextInstrMem;
+  unsigned short opcode;
+
+  struct tab_elt *p;
+
+  //instrMem = (short *) registers[PC];
+  instrMem = (char *) registers.pc;
+
+  opcode = *instrMem;
+  stepped = 1;
+
+  for (p = opc_main; p->val != (opcode & p->mask); ++p)
+    ;
+
+  nextInstrMem = (char *) p->fp(instrMem, p);
+
+  instrMem = nextInstrMem;
+  instrBuffer.memAddr = instrMem;
+  instrBuffer.oldInstr = *instrMem;
+  *instrMem = SSTEP_INSTR;
+}
+
+
+/* Undo the effect of a previous doSStep.  If we single stepped,
+   restore the old instruction. */
+
+void
+undoSStep (void)
+{
+  if (stepped)
+    { char *instrMem;
+      instrMem = instrBuffer.memAddr;
+      *instrMem = instrBuffer.oldInstr;
+    }
+  stepped = 0;
+}
+
+/*
+This function does all exception handling.  It only does two things -
+it figures out why it was called and tells gdb, and then it reacts
+to gdb's requests.
+
+When in the monitor mode we talk a human on the serial line rather than gdb.
+
+*/
+void
+gdb_handle_exception (int exceptionVector)
+{
+  int sigval, stepping;
+  int addr, length;
+  char *ptr;
+
+  /* reply to host that an exception has occurred */
+  sigval = computeSignal (exceptionVector);
+  remcomOutBuffer[0] = 'S';
+  remcomOutBuffer[1] = highhex(sigval);
+  remcomOutBuffer[2] = lowhex (sigval);
+  remcomOutBuffer[3] = 0;
+
+  putpacket (remcomOutBuffer);
+
+  /*
+   * Exception 0x08 means a RST 08 instruction (breakpoint) inserted in
+   * place of code
+   * 
+   * Backup PC by one instruction, this instruction will later
+   * be replaced by the original instruction at the breakpoint
+   */
+  if (exceptionVector == 0x08)
+    registers.pc -= 1;
+    // registers[R_PC] -= 1;
+
+  /*
+   * Do the thangs needed to undo
+   * any stepping we may have done!
+   */
+  undoSStep ();
+
+  stepping = 0;
+
+  while (1)
+    {
+      remcomOutBuffer[0] = 0;
+      ptr = getpacket ();
+
+      switch (*ptr++)
+        {
+        case '?':
+          remcomOutBuffer[0] = 'S';
+          remcomOutBuffer[1] = highhex (sigval);
+          remcomOutBuffer[2] = lowhex (sigval);
+          remcomOutBuffer[3] = 0;
+          break;
+        case 'd':
+          remote_debug = !(remote_debug);       /* toggle debug flag */
+          break;
+        case 'g':               /* return the value of the CPU registers */
+          mem2hex ((char *) registers, remcomOutBuffer, NUMREGBYTES);
+          break;
+        case 'G':               /* set the value of the CPU registers - return OK */
+          hex2mem (ptr, (char *) registers, NUMREGBYTES);
+          strcpy (remcomOutBuffer, "OK");
+          break;
+
+          /* mAA..AA,LLLL  Read LLLL bytes at address AA..AA */
+        case 'm':
+          dofault = 0;
+          /* TRY, TO READ %x,%x.  IF SUCCEED, SET PTR = 0 */
+          if (hexToInt (&ptr, &addr))
+            if (*(ptr++) == ',')
+              if (hexToInt (&ptr, &length))
+                {
+                  ptr = 0;
+                  mem2hex ((char *) addr, remcomOutBuffer, length);
+                }
+          if (ptr)
+            strcpy (remcomOutBuffer, "E01");
+
+          break;
+
+          /* MAA..AA,LLLL: Write LLLL bytes at address AA.AA return OK */
+        case 'M':
+          /* TRY, TO READ '%x,%x:'.  IF SUCCEED, SET PTR = 0 */
+          if (hexToInt (&ptr, &addr))
+            if (*(ptr++) == ',')
+              if (hexToInt (&ptr, &length))
+                if (*(ptr++) == ':')
+                  {
+                    hex2mem (ptr, (char *) addr, length);
+                    ptr = 0;
+                    strcpy (remcomOutBuffer, "OK");
+                  }
+          if (ptr)
+            strcpy (remcomOutBuffer, "E02");
+
+          break;
+
+          /* cAA..AA    Continue at address AA..AA(optional) */
+          /* sAA..AA   Step one instruction from AA..AA(optional) */
+        case 's':
+          stepping = 1;
+        case 'c':
+          {
+            /* tRY, to read optional parameter, pc unchanged if no parm */
+            if (hexToInt (&ptr, &addr))
+              registers.pc = addr;
+              //registers[R_PC] = addr;
+            if (stepping)
+              doSStep ();
+          }
+          return;
+          break;
+
+          /* kill the program */
+        case 'k':               /* do nothing */
+          break;
+
+        case 'q':
+          /* is this a monitor command? */
+          // if (!strncmp("qRcmd", ptr, strlen("qRcmd")))
+          if (*ptr=='R')
+            {
+              if (!handle_monitor_command(ptr + strlen("Rcmd,")))
+                {
+                  // monitor command was sucessful. 
+                  // handle_monitor_command wrote an Output response to the
+                  // command in remcomOutBuffer, so we send it now.
+                  putpacket(remcomOutBuffer);
+
+                  // then we set up another OK packet which will be
+                  // sent as the final response packet.
+                  strcpy (remcomOutBuffer, "OK");
+                }
+              else
+                strcpy (remcomOutBuffer, "E01");
+            }
+          break;
+        }                       /* switch */
+
+      /* reply to the request */
+      putpacket (remcomOutBuffer);
+    }
+}
+
+
+#define GDBCOOKIE 0x5ac 
+static int ingdbmode;
+void handle_exception(int exceptionVector)
+{
+  gdb_handle_exception (exceptionVector);
+}
+
+void
+gdb_mode (void)
+{
+  ingdbmode = GDBCOOKIE;
+  breakpoint();
+}
+/* This function will generate a breakpoint exception.  It is used at the
+   beginning of a program to sync up with a debugger and can be used
+   otherwise as a quick means to stop program execution and "break" into
+   the debugger. */
+void
+breakpoint (void) __naked
+{
+  __asm              
+  nop                
+  nop                
+  nop                
+  RST 08             
+  nop                
+  nop                
+  jp  0xb000        
+  nop                
+  nop                
+  __endasm;          
+}
 
 
 void sr() __naked
@@ -1453,189 +1358,14 @@ handleError (char theSSR)
 // --------------------
 
 static void *
-prt (void *pc, struct tab_elt *inst)
+pe_dummy (void *pc, const struct tab_elt *inst)
 {
-//   info->fprintf_func (info->stream, "%s", txt);
-//   buf->n_used = buf->n_fetch;
-  char *cpc = (char *)pc;
-  return (cpc + inst->inst_len);
-}
-
-static void *
-prt_e (void *pc, struct tab_elt *inst)
-{
-//   char e;
-//   int target_addr;
-// 
-//   if (fetch_data (buf, info, 1))
-//     {
-//       e = buf->data[1];
-//       target_addr = (buf->base + 2 + e) & 0xffff;
-//       buf->n_used = buf->n_fetch;
-//       info->fprintf_func (info->stream, "%s0x%04x", txt, target_addr);
-//     }
-//   else
-//     buf->n_used = -1;
-
-//  return buf->n_used;
-  return pc + inst->inst_len;
-}
-
-static void *
-prt_nn (void *pc, struct tab_elt *inst)
-{
-//   int nn;
-//   unsigned char *p;
-// 
-//   p = (unsigned char*) buf->data + buf->n_fetch;
-//   if (fetch_data (buf, info, 2))
-//     {
-//       nn = p[0] + (p[1] << 8);
-//       info->fprintf_func (info->stream, txt, nn);
-//       buf->n_used = buf->n_fetch;
-//     }
-//   else
-//     buf->n_used = -1;
-//  return buf->n_used;
-  char *cpc = (char *)pc;
-  return (cpc + inst->inst_len);
-}
-
-static void *
-prt_rr_nn (void *pc, struct tab_elt *inst)
-{
-   char mytxt[TXTSIZ];
-//   int rr;
-// 
-//   rr = (buf->data[buf->n_fetch - 1] >> 4) & 3; 
-//   snprintf (mytxt, TXTSIZ, txt, rr_str[rr]);
-//   return prt_nn (buf, info, mytxt);
-
-   return pc + inst->inst_len;
-}
-
-static void *
-prt_rr (void *pc, struct tab_elt *inst)
-{
-//   info->fprintf_func (info->stream, "%s%s", txt,
-// 		      rr_str[(buf->data[buf->n_fetch - 1] >> 4) & 3]);
-//   buf->n_used = buf->n_fetch;
-//   return buf->n_used;
-  return pc + inst->inst_len;
-}
-
-static void *
-prt_n  (void *pc, struct tab_elt *inst)
-{
-//   int n;
-//   unsigned char *p;
-// 
-//   p = (unsigned char*) buf->data + buf->n_fetch;
-// 
-//   if (fetch_data (buf, info, 1))
-//     {
-//       n = p[0];
-//       info->fprintf_func (info->stream, txt, n);
-//       buf->n_used = buf->n_fetch;
-//     }
-//   else
-//     buf->n_used = -1;
-
-//  return buf->n_used;
   char *cpc = (char *)pc;
   return (cpc + inst->inst_len);
 }
 
 void *
-ld_r_n  (void *pc, struct tab_elt *inst)
-{
-   char mytxt[TXTSIZ];
-// 
-//   snprintf (mytxt, TXTSIZ, txt, r_str[(buf->data[0] >> 3) & 7]);
-//   return prt_n (buf, info, mytxt);
-   return prt_n(pc, inst);
-}
-
-void *
-prt_r (void *pc, struct tab_elt *inst)
-{
-//   info->fprintf_func (info->stream, txt,
-// 		      r_str[(buf->data[buf->n_fetch - 1] >> 3) & 7]);
-//   buf->n_used = buf->n_fetch;
-//   return buf->n_used;
-  char *cpc = (char *)pc;
-  return (cpc + inst->inst_len);
-}
-
-void *
-ld_r_r (void *pc, struct tab_elt *inst)
-{
-//   info->fprintf_func (info->stream, txt,
-// 		      r_str[(buf->data[buf->n_fetch - 1] >> 3) & 7],
-// 		      r_str[buf->data[buf->n_fetch - 1] & 7]);
-//   buf->n_used = buf->n_fetch;
-//   return buf->n_used;
-  char *cpc = (char *)pc;
-  return (cpc + inst->inst_len);
-}
-
-void *
-arit_r (void *pc, struct tab_elt *inst)
-{
-//   info->fprintf_func (info->stream, txt,
-// 		      arit_str[(buf->data[buf->n_fetch - 1] >> 3) & 7],
-// 		      r_str[buf->data[buf->n_fetch - 1] & 7]);
-//   buf->n_used = buf->n_fetch;
-//   return buf->n_used;
-  char *cpc = (char *)pc;
-  return (cpc + inst->inst_len);
-}
-
-void *
-prt_cc (void *pc, struct tab_elt *inst)
-{
-//   info->fprintf_func (info->stream, "%s%s", txt,
-// 		      cc_str[(buf->data[0] >> 3) & 7]);
-//   buf->n_used = buf->n_fetch;
-//   return buf->n_used;
-  return pc + inst->inst_len;
-}
-
-void *
-pop_rr (void *pc, struct tab_elt *inst)
-{
-//   static char *rr_stack[] = { "bc","de","hl","af"};
-// 
-//   info->fprintf_func (info->stream, "%s %s", txt,
-// 		      rr_stack[(buf->data[0] >> 4) & 3]);
-//   buf->n_used = buf->n_fetch;
-//   return buf->n_used;
-  char *cpc = (char *)pc;
-  return (cpc + inst->inst_len);
-}
-
-void *
-jp_cc_nn (void *pc, struct tab_elt *inst)
-{
-  char mytxt[TXTSIZ];
-// 
-//   snprintf (mytxt,TXTSIZ,
-// 	    "%s%s,0x%%04x", txt, cc_str[(buf->data[0] >> 3) & 7]);
-  return prt_nn (pc, inst);
-}
-
-
-void *
-arit_n (void *pc, struct tab_elt *inst)
-{
-  char mytxt[TXTSIZ];
-// 
-//   snprintf (mytxt,TXTSIZ, txt, arit_str[(buf->data[0] >> 3) & 7]);
-  return prt_n (pc, inst);
-}
-
-void *
-pe_rst (void *pc, struct tab_elt *inst)
+pe_rst (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   char opcode = *cpc;
@@ -1648,7 +1378,7 @@ pe_rst (void *pc, struct tab_elt *inst)
 }
 
 void *
-pref_cb (void *pc, struct tab_elt *inst)
+pref_cb (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   // all CB prefixed instructions have the same length (2 bytes)
@@ -1656,7 +1386,7 @@ pref_cb (void *pc, struct tab_elt *inst)
 }
 
 void *
-pref_ind (void *pc, struct tab_elt *inst)
+pref_ind (void *pc, const struct tab_elt *inst)
 {
   struct tab_elt *p;
   char *cpc = (char *)pc;
@@ -1669,43 +1399,13 @@ pref_ind (void *pc, struct tab_elt *inst)
 }
 
 void *
-pref_xd_cb (void *pc, struct tab_elt *inst)
+pref_xd_cb (void *pc, const struct tab_elt *inst)
 {
-//   if (fetch_data (buf, info, 2))
-//     {
-//       int d;
-//       char arg[TXTSIZ];
-//       signed char *p;
-// 
-//       buf->n_used = 4;
-//       p = buf->data;
-//       d = p[2];
-// 
-//       if (((p[3] & 0xC0) == 0x40) || ((p[3] & 7) == 0x06))
-// 	snprintf (arg, TXTSIZ, "(%s%+d)", txt, d);
-//       else
-// 	snprintf (arg, TXTSIZ, "(%s%+d),%s", txt, d, r_str[p[3] & 7]);
-// 
-//       if ((p[3] & 0xc0) == 0)
-// 	info->fprintf_func (info->stream, "%s %s",
-// 			    cb2_str[(buf->data[3] >> 3) & 7],
-// 			    arg);
-//       else
-// 	info->fprintf_func (info->stream, "%s %d,%s",
-// 			    cb1_str[(buf->data[3] >> 6) & 3],
-// 			    (buf->data[3] >> 3) & 7,
-// 			    arg);
-//     }
-//   else
-//     buf->n_used = -1;
-
-//  return buf->n_used;
-
   return pc + inst->inst_len;
 }
 
 static void *
-pref_ed (void *pc, struct tab_elt *inst)
+pref_ed (void *pc, const struct tab_elt *inst)
 {
   struct tab_elt *p;
   char *cpc = (char *)pc;
@@ -1720,7 +1420,7 @@ pref_ed (void *pc, struct tab_elt *inst)
 
 //---------- CONTROL JUMP INSTRUCTIONS PSEUDO EVAL FUNCTIONS ----------
 void *
-pe_djnz (void *pc, struct tab_elt *inst)
+pe_djnz (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
 
@@ -1734,7 +1434,7 @@ pe_djnz (void *pc, struct tab_elt *inst)
 }
 
 void *
-pe_jp_nn (void *pc, struct tab_elt *inst)
+pe_jp_nn (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   short nn  = *(short *)(cpc+1); // immediate nn for the jp
@@ -1742,7 +1442,7 @@ pe_jp_nn (void *pc, struct tab_elt *inst)
 }
 
 void *
-pe_jp_cc_nn (void *pc, struct tab_elt *inst)
+pe_jp_cc_nn (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   short e = 0;
@@ -1766,7 +1466,7 @@ pe_jp_cc_nn (void *pc, struct tab_elt *inst)
 }
 
 void *
-pe_jr (void *pc, struct tab_elt *inst)
+pe_jr (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   int e =  cpc[1]; //  relative offset for the jump
@@ -1827,7 +1527,7 @@ char cc_holds(char cond)
 
 /* jr nz TESTED: OK! */
 void *
-pe_jr_cc (void *pc, struct tab_elt *inst)
+pe_jr_cc (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   short e = 0;
@@ -1847,14 +1547,14 @@ pe_jr_cc (void *pc, struct tab_elt *inst)
 }
 
 void *
-pe_ret (void *pc, struct tab_elt *inst)
+pe_ret (void *pc, const struct tab_elt *inst)
 {
   void *ret_addr = (void *) *((short *)registers.sp); // get the return address from the TOS
   return ret_addr;
 }
 
 void *
-pe_ret_cc (void *pc, struct tab_elt *inst)
+pe_ret_cc (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
   char opcode = *cpc;
@@ -1873,6 +1573,138 @@ pe_ret_cc (void *pc, struct tab_elt *inst)
       return (cpc + inst->inst_len);
     }
 }
+
+int
+handle_monitor_command(char *qRcmd_payload)
+{
+  /* build the command string from the qRcmd message payload */
+  // char payload_str[BUFMAX];
+  char *cmdstr = payload_str;
+  hex2mem(qRcmd_payload, payload_str, BUFMAX);
+  
+  
+  /* 
+     Try to parse an "in" command.  An "in" command format is "in
+     (0xHH)" where H is an hex digit.
+  */
+  if (!strncmp("in ", cmdstr, strlen("in ")))
+    {
+      cmdstr += strlen("in ");
+      while (*cmdstr == ' ') cmdstr++; // ignore extra whitespace
+      
+      if (!strncmp("(0x", cmdstr, strlen("(0x"))) // starts with "(0x"
+        {
+          int in_port;
+          cmdstr += strlen("(0x");
+          if (hexToInt(&cmdstr, &in_port)) // a two hex digit port address was read
+            {
+              char in_data = read_port((char)in_port);
+              char in_data_hex[3];
+
+              remcomOutBuffer[0] = 'O';
+              mem2hex(&in_data, in_data_hex, 1);           // the byte read, in ascii hex
+              mem2hex("read: 0x", remcomOutBuffer+1, 8);
+              mem2hex(in_data_hex, remcomOutBuffer+17, 2); // asci_hex(asci_hex(byte_read))
+              mem2hex("\n", remcomOutBuffer+21, 1);        // traling new line
+              remcomOutBuffer[23]='\0';                    // null char terminate
+              return 0;
+            }
+        }
+    } // end of IN command
+
+  if (!strncmp("out ", cmdstr, strlen("out ")))
+    {
+      cmdstr += strlen("out ");
+      while (*cmdstr == ' ') cmdstr++; // ignore extra whitespace
+      
+      if (!strncmp("(0x", cmdstr, strlen("(0x"))) // starts with "(0x"
+        {
+          int out_port;
+          cmdstr += strlen("(0x");
+          if (hexToInt(&cmdstr, &out_port)) // a two hex digit port address was read
+            {
+              while (*cmdstr++ == ' ' || *cmdstr == ','); // ignore extra whitespace and comma
+              
+              if (!strncmp("0x", cmdstr, strlen("0x"))) // out value starts with 0x
+                {
+                  int out_data;
+                  cmdstr += strlen("0x");
+                  hexToInt(&cmdstr, &out_data);
+                  write_port((char)out_port, (char)out_data);
+                }
+
+              strcat(remcomOutBuffer, "OK");
+              return 0;
+            }
+        }
+    } // end of OUT command
+
+
+ error:  
+  // strcpy (remcomOutBuffer, "E01");
+  return 1;
+}
+
+char
+read_port(char in_port) __naked
+{
+  __asm
+    push ix
+    ld  ix,#0 
+    add ix,sp
+
+    push bc
+    push af
+
+    ;; get the port from the stack
+    
+
+    ld b, #0
+    ld c, 4 (ix)
+    ;; ld c, #0x90
+
+    ;; read that port and return it in l
+    in l, (c)
+
+    pop af
+    pop bc
+
+    pop ix
+    ret
+
+  __endasm;
+}
+
+void
+write_port(char out_port, char out_data) __naked
+{
+  __asm
+    push ix    
+    ld   ix, #0
+    add  ix, sp
+
+    push bc
+    push af
+    
+    ;; get the port argument
+
+    ld c, 4 (ix)
+    
+    ;; get the data to write
+    ld a, 5 (ix)
+
+    ;; write the data to the out port     
+    out (c), a
+
+    pop af
+    pop bc
+
+    pop ix
+    ret
+
+  __endasm;
+}
+
 
 /* pacify the compiler */
 void main () {}
