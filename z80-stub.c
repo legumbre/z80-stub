@@ -252,8 +252,8 @@ char payload_str[BUFMAX];
 void breakpoint() __naked;
 void INIT ();
 
-#define Z80_NMI           0x64
-#define Z80_RST08_VEC      8
+#define Z80_NMI           0x66
+#define Z80_RST08_VEC     8
 
 char intcause; /* TODO: initialize */
 char in_nmi;   /* Set when handling an NMI, so we don't reenter */
@@ -729,7 +729,7 @@ computeSignal (int exceptionVector)
   switch (exceptionVector)
     {
     case Z80_NMI:
-      sigval = 2;
+      sigval = 19; /* SIGSTOP */
       break;    
 
     case Z80_RST08_VEC:
@@ -817,7 +817,6 @@ gdb_handle_exception (int exceptionVector)
    */
   if (exceptionVector == 0x08)
     registers.pc -= 1;
-    // registers[R_PC] -= 1;
 
   /*
    * Do the thangs needed to undo
@@ -1080,7 +1079,10 @@ void sr() __naked
      ex    (sp), hl
      ld    hl, (#_registers + R_HL)
 
-     ret
+     ;; we might have interrupted the inferior with a NMI,
+     ;; so we use retn just in case.
+     out (#0x10), a ;; clear the NMI FF
+     retn
   __endasm;
 }
 

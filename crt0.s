@@ -42,6 +42,15 @@
         push    hl
         ld      hl,#0x38
         jp      _sr
+	
+;;;  NMI will be used for the 'bash' button
+;;;  If the user bashes this button, control will be given back to the
+;;;  monitor in order to resync with the debugger
+	.org    0x66
+        push    hl
+        ld      hl,#0x66
+        jp      _sr
+
 
 	.org	0x100
 init:
