@@ -1224,15 +1224,16 @@ pref_ind (void *pc, const struct tab_elt *inst)
 
   for (p = opc_ind; p->val != (cpc[1] & p->mask); ++p)
     ;
-  return (pc + 
-          1  + // FD or DD  prefix
+  return (cpc + 
+          1   + // FD or DD  prefix
           p->inst_len);
 }
 
 void *
 pref_xd_cb (void *pc, const struct tab_elt *inst)
 {
-  return pc + inst->inst_len;
+  char *cpc = (char *)pc;
+  return cpc + inst->inst_len;
 }
 
 static void *
@@ -1243,8 +1244,8 @@ pref_ed (void *pc, const struct tab_elt *inst)
 
   for (p = opc_ed; p->val != (cpc[1] & p->mask); ++p)
     ;
-  return (pc + 
-          1  + // ED prefix
+  return (cpc + 
+          1   + // ED prefix
           p->inst_len);
 }
 // -------------------- 
