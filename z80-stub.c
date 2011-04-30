@@ -1255,8 +1255,9 @@ void *
 pe_djnz (void *pc, const struct tab_elt *inst)
 {
   char *cpc = (char *)pc;
+  short b = ((unsigned short)registers.bc >> 8);
 
-  if (registers.a - 1 == 0)
+  if (b - 1 == 0)
     return (cpc + inst->inst_len); 
   else
     {    // result of dec wasn't Z, so we jump e
