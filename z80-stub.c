@@ -252,14 +252,24 @@ char payload_str[BUFMAX];
 void breakpoint() __naked;
 void INIT ();
 
-#define Z80_NMI           0x66
-#define Z80_RST08_VEC     8
+// #define MONITOR_STACK         0x7000 // 0x7000 - 0x7400
+#define MONITOR_STACK_SIZE    1024
+ /* Z80 stack grows downwards (BOTTOM as in an abstract "stack", not as in memory address) */
+// #define MONITOR_STACK_BOTTOM  0xB000 // (MONITOR_STACK_SIZE + MONITOR_STACK)
+#define MONITOR_STACK_BOTTOM  0xB000 // (MONITOR_STACK_SIZE + MONITOR_STACK)
+
+#define Z80_NMI            0x66
+#define Z80_RST08_VEC      8
+
+// __xdata __at (MONITOR_STACK) char monitor_stack[MONITOR_STACK_SIZE];
+
+short monitor_sp;
 
 char intcause; /* TODO: initialize */
 char in_nmi;   /* Set when handling an NMI, so we don't reenter */
-int dofault;  /* Non zero, bus errors will raise exception */
+int dofault;   /* Non zero, bus errors will raise exception */
 
-char read_ch; /* TODO byte read from serial port, for now it's a global */
+char read_ch;  /* TODO: byte read from serial port, for now it's a global */
 
 /* debug > 0 prints ill-formed commands in valid packets & checksum errors */
 int remote_debug;
@@ -981,18 +991,25 @@ void sr() __naked
    /* saveRegisters routine */
   saveRegisters:
    __asm
-     ld    (#_intcause), hl        ;; argument passed in hl signals the exception cause
+     ld    (#_intcause), hl          ;; argument passed in hl signals the exception cause
 
-     pop   hl                      ;; recover original hl before hitting the breakpoint
+     pop   hl                        ;; recover original hl before hitting the breakpoint
      ld    (#_registers + R_HL), hl
+
+     pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
+     ld   (#_registers + R_PC), hl
+     push hl
 
      ld    hl,#0000                  ;; save the stack pointer
      add   hl, sp
      inc   hl                        ;; take into account the "extra" push generated
      inc   hl                        ;; by the breakpoint trap.
-     ld    (#_registers + R_SP), hl                                   
+     ld    (#_registers + R_SP), hl
 
-     push  af                      ;; dirty trick to save AF
+     ;; swap in the monitor stack
+     ld   sp, #MONITOR_STACK_BOTTOM
+
+     push  af                        ;; dirty trick to save AF
      pop   hl
      ld    a,h
      ld    (#_registers + R_A), a   
@@ -1020,9 +1037,8 @@ void sr() __naked
      ex   af,af'                     ;;'
      exx
 
-     pop  hl                         ; get the PC saved as the returned address when the breakpoint hit
-     ld   (#_registers + R_PC), hl
-     push hl
+
+
 
      ld    hl, (#_intcause)
      push  hl

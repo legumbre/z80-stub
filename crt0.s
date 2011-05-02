@@ -39,9 +39,7 @@
         jp      _sr
 	
         .org    0x38
-        push    hl
-        ld      hl,#0x38
-        jp      _sr
+        jp      0x0b038
 	
 ;;;  NMI will be used for the 'bash' button
 ;;;  If the user bashes this button, control will be given back to the
@@ -55,7 +53,8 @@
 	.org	0x100
 init:
 	;; Stack at the top of memory.
-	ld	sp,#0xffff
+;;; 	ld	sp, #0xb000
+	ld	sp, #0xb000
 
         ;; Initialise global variables
         call    gsinit
