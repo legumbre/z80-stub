@@ -331,6 +331,7 @@ void *pref_xd_cb (void *pc, const struct tab_elt *inst);
 void *pe_djnz (void *pc, const struct tab_elt *inst);
 void *pe_jp_nn (void *pc, const struct tab_elt *inst);
 void *pe_jp_cc_nn (void *pc, const struct tab_elt *inst);
+void *pe_jp_hl (void *pc, const struct tab_elt *inst);
 void *pe_jr (void *pc, const struct tab_elt *inst);
 void *pe_jr_cc (void *pc, const struct tab_elt *inst);
 void *pe_ret (void *pc, const struct tab_elt *inst);
@@ -392,7 +393,7 @@ const struct tab_elt opc_main[] =
   { 0xDB, 0xFF, pe_dummy    ,  2 }, // "in a,(0x%02x)", 
   { 0xDD, 0xFF, pref_ind    ,  0 }, // "ix",            
   { 0xE3, 0xFF, pe_dummy    ,  1 }, // "ex (sp),hl",    
-  { 0xE9, 0xFF, pe_dummy    ,  1 }, // "jp (hl)",       
+  { 0xE9, 0xFF, pe_jp_hl    ,  1 }, // "jp (hl)",
   { 0xEB, 0xFF, pe_dummy    ,  1 }, // "ex de,hl",      
   { 0xED, 0xFF, pref_ed     ,  0 }, // "",              
   { 0xF3, 0xFF, pe_dummy    ,  1 }, // "di",            
@@ -1312,6 +1313,12 @@ pe_jp_cc_nn (void *pc, const struct tab_elt *inst)
       // move PC to the next instruction
       return (cpc + inst->inst_len);
     }
+}
+
+void *pe_jp_hl (void *pc, const struct tab_elt *inst)
+{
+  char *jp_addr  = (char *) registers.hl;
+  return (jp_addr);
 }
 
 void *
