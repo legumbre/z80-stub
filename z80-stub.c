@@ -145,35 +145,6 @@
 #define UART_DATA          UART_BASE+0
 #endif
 
-
-/* Renesas SH architecture instruction encoding masks */
-
-#define COND_BR_MASK   0xff00
-#define UCOND_DBR_MASK 0xe000
-#define UCOND_RBR_MASK 0xf0df
-#define TRAPA_MASK     0xff00
-
-#define COND_DISP      0x00ff
-#define UCOND_DISP     0x0fff
-#define UCOND_REG      0x0f00
-
-/* Renesas SH instruction opcodes */
-
-#define BF_INSTR       0x8b00
-#define BT_INSTR       0x8900
-#define BRA_INSTR      0xa000
-#define BSR_INSTR      0xb000
-#define JMP_INSTR      0x402b
-#define JSR_INSTR      0x400b
-#define RTS_INSTR      0x000b
-#define RTE_INSTR      0x002b
-#define TRAPA_INSTR    0xc300
-/// LLL #define SSTEP_INSTR    0xc3ff
-
-/* Z80 registers (should match the constants used in gdb  */
-// TODO: maybe include someheader.h which is also included from z80-tdep.h?
-
-
 /* Z80 instruction opcodes */
 #define RST08_INST     0xCF
 #define BREAK_INST     RST08_INST
@@ -189,6 +160,7 @@
  */
 #define BUFMAX 256
 
+/* Z80 registers (should match the constants used in gdb  */
 
 /* registers constants */
 #define R_A     0
@@ -260,8 +232,6 @@ void INIT ();
 
 #define Z80_NMI            0x66
 #define Z80_RST08_VEC      8
-
-// __xdata __at (MONITOR_STACK) char monitor_stack[MONITOR_STACK_SIZE];
 
 short monitor_sp;
 
