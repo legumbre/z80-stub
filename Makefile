@@ -16,9 +16,10 @@ crt0.o: crt0.s
 z80-stub.o: z80-stub.c
 	sdcc ${SDCC_FLAGS} z80-stub.c -o z80-stub.o
 
-monitor-qemu: crt0.o z80-stub.o
-
+monitor-qemu: monitor-z80
+	srec_cat crt0.ihx -Intel -output z80-stub.bin -Binary && \
+        cat z80-stub.bin /dev/zero | dd bs=1k count=16 > qemu-rom.bin
 clean:
-	rm -f crt0.ihx crt0.o z80-stub.o monitor.hex ${CRT0_TMPS} ${Z80STUB_TMPS}
+	rm -f crt0.ihx crt0.o z80-stub.o z80-stub.bin qemu-rom.bin monitor.hex ${CRT0_TMPS} ${Z80STUB_TMPS}
 
 
