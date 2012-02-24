@@ -133,30 +133,31 @@
 
 #include <string.h>
 
-/* Serial link constants */
+/*
+ * Target-dependant ports
+ */                             
 
+/* Hardware target port addresses*/
 #ifdef TARGET_Z80 
-#define UART_BASE          0x80
+#define UART_BASE          0x00
 #define UART_DATA          UART_BASE+0
 #define UART_RX_VALID      UART_BASE+1
 #define UART_RX_VALID_MASK 0x80
-#else
+#endif
+
+/* QEMU target port addresses */
+#ifdef TARGET_QEMU
 #define UART_BASE          0x00
 #define UART_DATA          UART_BASE+0
 #endif
 
 /* external NMI FF clear */
-#define NMI_FF_CLR         0x10  
-
+#define NMI_FF_CLR         0x10
 
 /* Z80 instruction opcodes */
 #define RST08_INST     0xCF
 #define BREAK_INST     RST08_INST
 #define SSTEP_INSTR    BREAK_INST
-
-/* Renesas SH processor register masks */
-
-#define T_BIT_MASK     0x0001
 
 /*
  * BUFMAX defines the maximum number of characters in inbound/outbound
@@ -1118,7 +1119,7 @@ getDebugChar (void)
 #ifdef TARGET_QEMU
   // TODO: make a macro for IO, or see the SFR instructions
   __asm
-    in a, (0x00)
+    in a, (UART_DATA)
     ld (_read_ch), a
   __endasm;
 #endif
@@ -1160,7 +1161,7 @@ putDebugChar (char ch)
   // TODO: make a macro for IO, or see the SFR instructions
   __asm
     ld    a,4(ix) 
-    out   (0x00),a
+    out   (UART_DATA),a
   __endasm;
 #endif
 
