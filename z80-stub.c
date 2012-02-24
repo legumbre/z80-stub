@@ -188,11 +188,7 @@
 #define R_DEX   20
 #define R_HLX   22
 
-// TODO: fix this!
 #define R_PC    24
-// #define R_AF    24
-// #define R_AFX   26
-
 
 /*
  * Number of bytes for registers
@@ -229,14 +225,12 @@ char payload_str[BUFMAX];
 void breakpoint() __naked;
 void INIT ();
 
-// #define MONITOR_STACK         0x7000 // 0x7000 - 0x7400
 #define MONITOR_STACK_SIZE    1024
- /* Z80 stack grows downwards (BOTTOM as in an abstract "stack", not as in memory address) */
-// #define MONITOR_STACK_BOTTOM  0xB000 // (MONITOR_STACK_SIZE + MONITOR_STACK)
+/* Z80 stack grows downwards (BOTTOM as in an abstract "stack", not
+   as in memory address) */
 #define MONITOR_STACK_BOTTOM  0xB000 // (MONITOR_STACK_SIZE + MONITOR_STACK)
-
-#define Z80_NMI            0x66
-#define Z80_RST08_VEC      8
+#define Z80_NMI               0x66
+#define Z80_RST08_VEC         8
 
 short monitor_sp;
 
@@ -274,7 +268,6 @@ typedef struct
   }
 stepData;
 
-// int registers[NUM_REGISTERS];
 stepData instrBuffer;
 char stepped;
 static const char hexchars[] = "0123456789abcdef";
@@ -298,21 +291,21 @@ struct tab_elt
 } ;
 
 /* PSEUDO EVAL FUNCTIONS */
-void *rst (void *pc, const struct tab_elt *inst);
-void *pref_cb (void *pc, const struct tab_elt *inst);
-void *pref_ed (void *pc, const struct tab_elt *inst);
-void *pref_ind (void *pc, const struct tab_elt *inst);
-void *pref_xd_cb (void *pc, const struct tab_elt *inst);
-void *pe_djnz (void *pc, const struct tab_elt *inst);
-void *pe_jp_nn (void *pc, const struct tab_elt *inst);
+void *rst         (void *pc, const struct tab_elt *inst);
+void *pref_cb     (void *pc, const struct tab_elt *inst);
+void *pref_ed     (void *pc, const struct tab_elt *inst);
+void *pref_ind    (void *pc, const struct tab_elt *inst);
+void *pref_xd_cb  (void *pc, const struct tab_elt *inst);
+void *pe_djnz     (void *pc, const struct tab_elt *inst);
+void *pe_jp_nn    (void *pc, const struct tab_elt *inst);
 void *pe_jp_cc_nn (void *pc, const struct tab_elt *inst);
-void *pe_jp_hl (void *pc, const struct tab_elt *inst);
-void *pe_jr (void *pc, const struct tab_elt *inst);
-void *pe_jr_cc (void *pc, const struct tab_elt *inst);
-void *pe_ret (void *pc, const struct tab_elt *inst);
-void *pe_ret_cc (void *pc, const struct tab_elt *inst);
-void *pe_rst (void *pc, const struct tab_elt *inst);
-void *pe_dummy (void *pc, const struct tab_elt *inst);
+void *pe_jp_hl    (void *pc, const struct tab_elt *inst);
+void *pe_jr       (void *pc, const struct tab_elt *inst);
+void *pe_jr_cc    (void *pc, const struct tab_elt *inst);
+void *pe_ret      (void *pc, const struct tab_elt *inst);
+void *pe_ret_cc   (void *pc, const struct tab_elt *inst);
+void *pe_rst      (void *pc, const struct tab_elt *inst);
+void *pe_dummy    (void *pc, const struct tab_elt *inst);
 /* end of pseudo eval functions */
 
 /* Table to disassemble machine codes without prefix.  */
@@ -495,14 +488,8 @@ char lowhex(int  x)
 }
 
 /*
- * Assembly macros
- */
-
-
-/*
  * Routines to handle hex data
  */
-
 static int
 hex (char ch)
 {
@@ -705,8 +692,8 @@ putpacket (char *buffer)
 
 
 /*
- * this function takes the SH-1 exception number and attempts to
- * translate this number into a unix compatible signal value
+ * This function translates the trap (intcause) into a unix compatible
+ * signal value.
  */
 static int
 computeSignal (int exceptionVector)
@@ -738,7 +725,6 @@ doSStep (void)
 
   struct tab_elt *p;
 
-  //instrMem = (short *) registers[PC];
   instrMem = (char *) registers.pc;
 
   opcode = *instrMem;
@@ -758,7 +744,6 @@ doSStep (void)
 
 /* Undo the effect of a previous doSStep.  If we single stepped,
    restore the old instruction. */
-
 void
 undoSStep (void)
 {
@@ -916,7 +901,6 @@ gdb_handle_exception (int exceptionVector)
     }
 }
 
-
 #define GDBCOOKIE 0x5ac 
 static int ingdbmode;
 void handle_exception(int exceptionVector)
@@ -950,8 +934,8 @@ breakpoint (void) __naked
   __endasm;          
 }
 
-
-void sr() __naked
+void 
+sr() __naked
  {
    /* saveRegisters routine */
   saveRegisters:
@@ -1027,9 +1011,6 @@ void sr() __naked
 
  }
 
-
-
-
  void rr() __naked
  {
    __asm
@@ -1086,24 +1067,22 @@ void sr() __naked
   __endasm;
 }
 
-void handleError (char theSSR);
+void 
+handleError (char theSSR);
 
 void 
 init_serial (void)
 {
 }
 
-
 int
 getDebugCharReady (void)
 {
-
 #ifdef TARGET_Z80
   __asm
 
   __endasm;
 #endif
-
   return 1;
 }
 
@@ -1298,7 +1277,8 @@ pe_jp_cc_nn (void *pc, const struct tab_elt *inst)
     }
 }
 
-void *pe_jp_hl (void *pc, const struct tab_elt *inst)
+void *
+pe_jp_hl (void *pc, const struct tab_elt *inst)
 {
   char *jp_addr  = (char *) registers.hl;
   return (jp_addr);
@@ -1364,7 +1344,6 @@ char cc_holds(char cond)
   return holds;
 }
 
-/* jr nz TESTED: OK! */
 void *
 pe_jr_cc (void *pc, const struct tab_elt *inst)
 {
@@ -1547,8 +1526,9 @@ write_port(char out_port, char out_data) __naked
 
 
 /* pacify the compiler */
-void main () {}
+void 
+main () {}
 
 /* Local Variables: */
-/* compile-command: "./compile_z80stub.sh" */
+/* compile-command: "make -k" */
 /* End: */
