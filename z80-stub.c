@@ -1064,7 +1064,7 @@ void sr() __naked
      ex    af, af'                         ;'
      exx             
 
-                                           ; TODO: consider never restoring the SP, it is safer for the debugguer
+                                           ; TODO: consider never restoring the SP, it is safer for the debugger
      ld    hl, (#_registers + R_SP)        ; restore the stack pointer
      push  af                              ; do not overwrite the restored AF
      dec   hl                              ; remember we lied to the client by not taking
