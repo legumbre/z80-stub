@@ -145,6 +145,10 @@
 #define UART_DATA          UART_BASE+0
 #endif
 
+/* external NMI FF clear */
+#define NMI_FF_CLR         0x10  
+
+
 /* Z80 instruction opcodes */
 #define RST08_INST     0xCF
 #define BREAK_INST     RST08_INST
@@ -1076,7 +1080,7 @@ void sr() __naked
 
      ;; we might have interrupted the inferior with a NMI,
      ;; so we use retn just in case.
-     out (#0x10), a ;; clear the NMI FF
+     out (NMI_FF_CLR), a ;; clear the external NMI FF
      retn
   __endasm;
 }
