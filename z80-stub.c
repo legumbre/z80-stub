@@ -979,6 +979,15 @@ sr() __naked
      ld    (#_registers + R_IX), ix
      ld    (#_registers + R_IY), iy
 
+     ;; save I and R
+     push  af
+     ld    a, i
+     ld    (#_registers + R_I), a    ; yes, A
+     ld    a, r
+     ld    (#_registers + R_R), a    ; yes, A
+     pop   af
+
+
      ;; alternate register set
      exx
      ex   af,af'                     ;;'
@@ -1027,6 +1036,13 @@ sr() __naked
      ld    ix, (#_registers + R_IX)      
      ld    iy, (#_registers + R_IY)          
 
+     ;; restore I and R
+     push  af
+     ld    a, (#_registers + R_I)
+     ld    i, a
+     ld    a, (#_registers + R_R)
+     ld    r, a
+     pop   af                     ;; do not forget to restore A and F
 
      exx
      ex    af, af'                         ;'
