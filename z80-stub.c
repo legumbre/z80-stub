@@ -702,8 +702,8 @@ computeSignal (int exceptionVector)
   switch (exceptionVector)
     {
     case Z80_NMI:
-      sigval = 19; /* SIGSTOP */
-      break;    
+      sigval = 5; 
+      break;
 
     case Z80_RST08_VEC:
       sigval = 5;
