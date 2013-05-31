@@ -372,37 +372,37 @@ const struct tab_elt opc_main[] =
 } ;
 
 /* ED prefix opcodes table.
-   Note the instruction length _doesn't_ include the ED prefix)
+   Note the instruction length does include the ED prefix (+ 1 byte)
 */
 const struct tab_elt opc_ed[] =
 {
-  { 0x70, 0xFF, pe_dummy, 1 }, // "in f,(c)"       
-  { 0x70, 0xFF, pe_dummy, 1 }, // "xx"             
-  { 0x40, 0xC7, pe_dummy, 1 }, // "in %s,(c)"      
-  { 0x71, 0xFF, pe_dummy, 1 }, // "out (c),0"      
-  { 0x70, 0xFF, pe_dummy, 1 }, // "xx"             
-  { 0x41, 0xC7, pe_dummy, 1 }, // "out (c),%s"     
-  { 0x42, 0xCF, pe_dummy, 1 }, // "sbc hl,"        
-  { 0x43, 0xCF, pe_dummy, 3 }, // "ld (0x%%04x),%s"
-  { 0x44, 0xFF, pe_dummy, 1 }, // "neg"            
-  { 0x45, 0xFF, pe_ret  , 1 }, // "retn"           
-  { 0x46, 0xFF, pe_dummy, 1 }, // "im 0"           
-  { 0x47, 0xFF, pe_dummy, 1 }, // "ld i,a"         
-  { 0x4A, 0xCF, pe_dummy, 1 }, // "adc hl,"        
-  { 0x4B, 0xCF, pe_dummy, 3 }, // "ld %s,(0x%%04x)"
-  { 0x4D, 0xFF, pe_ret  , 1 }, // "reti"           
-  { 0x4F, 0xFF, pe_dummy, 1 }, // "ld r,a"         
-  { 0x56, 0xFF, pe_dummy, 1 }, // "im 1"           
-  { 0x57, 0xFF, pe_dummy, 1 }, // "ld a,i"         
-  { 0x5E, 0xFF, pe_dummy, 1 }, // "im 2"           
-  { 0x5F, 0xFF, pe_dummy, 1 }, // "ld a,r"         
-  { 0x67, 0xFF, pe_dummy, 1 }, // "rrd"            
-  { 0x6F, 0xFF, pe_dummy, 1 }, // "rld"            
-  { 0xA0, 0xE4, pe_dummy, 1 }, // ""               
-  { 0xC3, 0xFF, pe_dummy, 1 }, // "muluw hl,bc"    
-  { 0xC5, 0xE7, pe_dummy, 1 }, // "mulub a,%s"     
-  { 0xF3, 0xFF, pe_dummy, 1 }, // "muluw hl,sp"    
-  { 0x00, 0x00, pe_dummy, 1 }  // "xx"             
+  { 0x70, 0xFF, pe_dummy, 1 + 1 }, // "in f,(c)"       
+  { 0x70, 0xFF, pe_dummy, 1 + 1 }, // "xx"             
+  { 0x40, 0xC7, pe_dummy, 1 + 1 }, // "in %s,(c)"      
+  { 0x71, 0xFF, pe_dummy, 1 + 1 }, // "out (c),0"      
+  { 0x70, 0xFF, pe_dummy, 1 + 1 }, // "xx"             
+  { 0x41, 0xC7, pe_dummy, 1 + 1 }, // "out (c),%s"     
+  { 0x42, 0xCF, pe_dummy, 1 + 1 }, // "sbc hl,"        
+  { 0x43, 0xCF, pe_dummy, 1 + 3 }, // "ld (0x%%04x),%s"
+  { 0x44, 0xFF, pe_dummy, 1 + 1 }, // "neg"            
+  { 0x45, 0xFF, pe_ret  , 1 + 1 }, // "retn"           
+  { 0x46, 0xFF, pe_dummy, 1 + 1 }, // "im 0"           
+  { 0x47, 0xFF, pe_dummy, 1 + 1 }, // "ld i,a"         
+  { 0x4A, 0xCF, pe_dummy, 1 + 1 }, // "adc hl,"        
+  { 0x4B, 0xCF, pe_dummy, 1 + 3 }, // "ld %s,(0x%%04x)"
+  { 0x4D, 0xFF, pe_ret  , 1 + 1 }, // "reti"           
+  { 0x4F, 0xFF, pe_dummy, 1 + 1 }, // "ld r,a"         
+  { 0x56, 0xFF, pe_dummy, 1 + 1 }, // "im 1"           
+  { 0x57, 0xFF, pe_dummy, 1 + 1 }, // "ld a,i"         
+  { 0x5E, 0xFF, pe_dummy, 1 + 1 }, // "im 2"           
+  { 0x5F, 0xFF, pe_dummy, 1 + 1 }, // "ld a,r"         
+  { 0x67, 0xFF, pe_dummy, 1 + 1 }, // "rrd"            
+  { 0x6F, 0xFF, pe_dummy, 1 + 1 }, // "rld"            
+  { 0xA0, 0xE4, pe_dummy, 1 + 1 }, // ""               
+  { 0xC3, 0xFF, pe_dummy, 1 + 1 }, // "muluw hl,bc"    
+  { 0xC5, 0xE7, pe_dummy, 1 + 1 }, // "mulub a,%s"     
+  { 0xF3, 0xFF, pe_dummy, 1 + 1 }, // "muluw hl,sp"    
+  { 0x00, 0x00, pe_dummy, 1 + 1 }  // "xx"             
 };
 
 /* table for FD and DD prefixed instructions */
@@ -1239,9 +1239,7 @@ pref_ed (void *pc, const struct tab_elt *inst)
 
   for (p = opc_ed; p->val != (cpc[1] & p->mask); ++p)
     ;
-  return (cpc + 
-          1   + // ED prefix
-          p->inst_len);
+  return p->fp(cpc, p);
 }
 // -------------------- 
 
