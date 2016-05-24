@@ -434,7 +434,7 @@ const struct tab_elt opc_ind[] =
                             
   { 0xE1, 0xFF, pe_dummy   , 1 }, // "pop %s"               
   { 0xE5, 0xFF, pe_dummy   , 1 }, // "push %s"              
-  { 0xCB, 0xFF, pref_xd_cb , 0 }, // "%s"                   
+  { 0xCB, 0xFF, pref_xd_cb , 3 }, // "%s"                   
   { 0xE3, 0xFF, pe_dummy   , 1 }, // "ex (sp),%s"           
   { 0xE9, 0xFF, pe_dummy   , 1 }, // "jp (%s)"              
   { 0xF9, 0xFF, pe_dummy   , 1 }, // "ld sp,%s"             
