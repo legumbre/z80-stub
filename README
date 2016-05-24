@@ -1,0 +1,11 @@
+z80-stub
+========
+
+A gdb debug stub for a Z80 based system along with gdb-z80 (https://github.com/legumbre/gdb-z80).
+
+
+Building requirements
+=====================
+ - SDCC 2.8.0+
+ - srecord tools
+ 
